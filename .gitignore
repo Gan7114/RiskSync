@@ -15,3 +15,5 @@ docs/
 
 # Node modules
 node_modules/
+dashboard/.next/
+dashboard/node_modules/
