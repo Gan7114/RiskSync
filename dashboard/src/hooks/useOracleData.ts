@@ -3,9 +3,12 @@
 import { useState, useEffect, useRef } from "react";
 import { generateSnapshot } from "@/lib/mockData";
 import { isLive } from "@/lib/contracts";
+import { fetchLiveSnapshot } from "@/lib/liveData";
 import type { OracleSnapshot } from "@/lib/types";
 
-const POLL_INTERVAL_MS = 3000;
+// Simulation refreshes every 3s; live mode polls contracts every 10s (RPC rate-limit friendly)
+const SIM_POLL_MS  = 3_000;
+const LIVE_POLL_MS = 10_000;
 const PRICE_REFRESH_MS = 30_000;
 
 async function fetchEthPrice(): Promise<number | null> {
@@ -23,12 +26,13 @@ async function fetchEthPrice(): Promise<number | null> {
 }
 
 export function useOracleData() {
+  const live = isLive();
   const [data, setData] = useState<OracleSnapshot | null>(null);
-  const [simMode] = useState(!isLive());
+  const [simMode] = useState(!live);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const priceRef = useRef<number | null>(null);
 
-  // Fetch real ETH price once on mount, then every 30s
+  // Real ETH price from CoinGecko — overlaid in both sim and live modes
   useEffect(() => {
     let cancelled = false;
     const refresh = async () => {
@@ -41,26 +45,46 @@ export function useOracleData() {
   }, []);
 
   useEffect(() => {
-    const snapshot = () => {
-      const s = generateSnapshot();
-      // Overlay real ETH price when available
-      if (priceRef.current) {
-        s.chainlink.feedPrice = priceRef.current;
+    // Build a snapshot: start from mock baseline, overlay live data, overlay real ETH price
+    const buildSnapshot = async (): Promise<OracleSnapshot> => {
+      const base = generateSnapshot();
+
+      if (live) {
+        try {
+          const liveData = await fetchLiveSnapshot();
+          // Deep-merge: live data wins field-by-field over the mock baseline
+          Object.assign(base, liveData);
+          if (liveData.mco)  Object.assign(base.mco,  liveData.mco);
+          if (liveData.tdrv) Object.assign(base.tdrv, liveData.tdrv);
+          if (liveData.cplcs) Object.assign(base.cplcs, liveData.cplcs);
+          if (liveData.tco)  Object.assign(base.tco,  liveData.tco);
+          if (liveData.circuitBreaker) Object.assign(base.circuitBreaker, liveData.circuitBreaker);
+          if (liveData.chainlink) Object.assign(base.chainlink, liveData.chainlink);
+        } catch {
+          // live fetch failed — serve the mock baseline silently
+        }
       }
-      return s;
+
+      // Always overlay real ETH price if available (works in both modes)
+      if (priceRef.current) {
+        base.chainlink.feedPrice = priceRef.current;
+      }
+
+      return base;
     };
 
-    setData(snapshot());
+    // Initial load
+    buildSnapshot().then(setData);
 
+    const interval = live ? LIVE_POLL_MS : SIM_POLL_MS;
     timerRef.current = setInterval(() => {
-      if (simMode) setData(snapshot());
-      // Live mode: ethers.js calls would go here
-    }, POLL_INTERVAL_MS);
+      buildSnapshot().then(setData);
+    }, interval);
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [simMode]);
+  }, [live]);
 
   return { data, simMode };
 }

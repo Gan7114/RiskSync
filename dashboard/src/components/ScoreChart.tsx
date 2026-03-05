@@ -112,10 +112,10 @@ export default function ScoreChart({ scoreHistory, ewmaScore, alertLevel }: Prop
 
       <div className="flex gap-4 pt-1 border-t border-[#1a2744]">
         {[
-          { label: "CURRENT", val: scoreHistory[0] },
-          { label: "AVG", val: Math.round(scoreHistory.reduce((a, b) => a + b, 0) / scoreHistory.length) },
-          { label: "MAX", val: Math.max(...scoreHistory) },
-          { label: "MIN", val: Math.min(...scoreHistory) },
+          { label: "CURRENT", val: scoreHistory[0] ?? 0 },
+          { label: "AVG", val: scoreHistory.length ? Math.round(scoreHistory.reduce((a, b) => a + b, 0) / scoreHistory.length) : 0 },
+          { label: "MAX", val: scoreHistory.length ? Math.max(...scoreHistory) : 0 },
+          { label: "MIN", val: scoreHistory.length ? Math.min(...scoreHistory) : 0 },
         ].map(({ label, val }) => (
           <div key={label} className="flex flex-col">
             <div className="text-[10px] text-slate-600">{label}</div>

@@ -38,3 +38,8 @@ export const CIRCUIT_BREAKER_ABI = [
   "function currentLevel() view returns (uint8)",
   "function checkAndRespond() returns (bool levelChanged)",
 ];
+
+export const CVO_ABI = [
+  "function getPriceFeedDetails() view returns (string memory description, uint8 decimals, int256 latestPrice, uint80 latestRoundId)",
+  "function getVolatilityWithConfidence(uint8 numRounds, uint32 maxStalenessSecs) view returns (uint256 annualizedVolBps, uint256 numRoundsUsed, uint256 oldestRoundAgeSeconds)",
+];
