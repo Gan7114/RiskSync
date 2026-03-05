@@ -6,6 +6,35 @@ tick-sequence entropy, then unify them into a single risk score with autonomous 
 breakers, Chainlink-powered keepers, cross-chain alert propagation, and historical
 stress-scenario replay.
 
+## Live Demo
+
+> Dashboard connects directly to deployed Sepolia contracts — real on-chain risk data, live Chainlink ETH/USD price feed.
+
+**Deploy to Vercel:** `cd dashboard && vercel --prod` (requires Vercel account)
+
+### Sepolia Testnet Contracts (chainId 11155111)
+
+| Contract | Address | Etherscan |
+|---|---|---|
+| ManipulationCostOracle | `0xB3C34601FA06E78afe459C0c16D49449d575669B` | [view](https://sepolia.etherscan.io/address/0xB3C34601FA06E78afe459C0c16D49449d575669B) |
+| TickDerivedRealizedVolatility | `0x2DFc934b215C2D1ceCA838e7b53CFCae08877Ccf` | [view](https://sepolia.etherscan.io/address/0x2DFc934b215C2D1ceCA838e7b53CFCae08877Ccf) |
+| CrossProtocolCascadeScore | `0xD34314722A972925F4A2D5fFf0752aBbD8F39675` | [view](https://sepolia.etherscan.io/address/0xD34314722A972925F4A2D5fFf0752aBbD8F39675) |
+| TickConcentrationOracle | `0xeCF62d406025b06b9FC44198235C30EFde62a3e9` | [view](https://sepolia.etherscan.io/address/0xeCF62d406025b06b9FC44198235C30EFde62a3e9) |
+| UnifiedRiskCompositor | `0x191A27Eae07712410A0f37FFd4477B82412AA31e` | [view](https://sepolia.etherscan.io/address/0x191A27Eae07712410A0f37FFd4477B82412AA31e) |
+| LendingProtocolCircuitBreaker | `0x3b2859D5c62F78146836Bb47a76e1556cfdEfC3c` | [view](https://sepolia.etherscan.io/address/0x3b2859D5c62F78146836Bb47a76e1556cfdEfC3c) |
+| StressScenarioRegistry | `0xA1C034E51Db8d80A50dB9e096638950ceABCE666` | [view](https://sepolia.etherscan.io/address/0xA1C034E51Db8d80A50dB9e096638950ceABCE666) |
+| ChainlinkVolatilityOracle | `0x9b27152bE4ddc75C1ad7614BD18858D5966B9E8F` | [view](https://sepolia.etherscan.io/address/0x9b27152bE4ddc75C1ad7614BD18858D5966B9E8F) |
+| AutomatedRiskUpdater | `0xd3DD2704AE928e130825b4db9C0e862419e7aB40` | [view](https://sepolia.etherscan.io/address/0xd3DD2704AE928e130825b4db9C0e862419e7aB40) |
+| CrossChainRiskBroadcaster | `0x7639A986bC26012216A57Ea1E53aF14B26E70077` | [view](https://sepolia.etherscan.io/address/0x7639A986bC26012216A57Ea1E53aF14B26E70077) |
+
+**External integrations on Sepolia:**
+- Chainlink ETH/USD feed: `0x694AA1769357215DE4FAC081bf1f309aDC325306`
+- Uniswap V3 ETH/USDC pool: `0x6Ce0896eAE6D4BD668fDe41BB784548fb8F59b50`
+- CCIP Router: `0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59`
+- Aave V3 PoolDataProvider: `0x3e9708d80f7B3e43118013075F7e95CE3AB31F31`
+
+---
+
 ## Architecture
 
 ```
@@ -30,7 +59,8 @@ test/foundry/
 └── ForkTests.t.sol    — Mainnet fork tests (auto-skip when MAINNET_RPC_URL unset)
 
 script/
-└── Deploy.s.sol       — One-shot mainnet deployment (all 10 contracts)
+├── Deploy.s.sol         — One-shot mainnet deployment (all 10 contracts)
+└── DeploySepolia.s.sol  — Sepolia testnet deployment (testnet-friendly windows)
 ```
 
 ## Composite Score Formula
@@ -336,15 +366,32 @@ MAINNET_RPC_URL=https://mainnet.infura.io/v3/YOUR_KEY \
 
 ## Deployment
 
+**Sepolia testnet** (live — contracts already deployed, see addresses above):
+```shell
+source .env
+forge script script/DeploySepolia.s.sol \
+  --rpc-url $SEPOLIA_RPC_URL    \
+  --private-key $PRIVATE_KEY    \
+  --broadcast --verify
+```
+
+**Mainnet**:
 ```shell
 forge script script/Deploy.s.sol \
   --rpc-url $MAINNET_RPC_URL     \
   --private-key $DEPLOYER_KEY    \
-  --broadcast                    \
-  --verify
+  --broadcast --verify
 ```
 
-Deploys all 10 contracts in dependency order and logs each address.
+Both scripts deploy all 10 contracts in dependency order and log each address.
+
+**Dashboard** (live mode — point to deployed contracts):
+```shell
+cd dashboard
+# Create .env.local with NEXT_PUBLIC_* addresses (see .env.example)
+npm run dev          # local dev
+vercel --prod        # deploy to Vercel
+```
 
 ## Configuration
 
