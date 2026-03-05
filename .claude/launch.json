@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "hardhat-node",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["hardhat", "node"],
+      "port": 8545
+    },
+    {
+      "name": "dashboard",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "dashboard", "run", "dev"],
+      "port": 3000
+    }
+  ]
+}

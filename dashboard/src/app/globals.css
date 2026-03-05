@@ -1,0 +1,106 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #050b14;
+  --bg-card: #0a1628;
+  --border-dim: #1a2744;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  background-color: var(--bg-primary);
+  color: #e2e8f0;
+  font-family: 'JetBrains Mono', monospace;
+  overflow-x: hidden;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #0a1628; }
+::-webkit-scrollbar-thumb { background: #1a2744; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #2a3d66; }
+
+/* Glass card */
+.glass {
+  background: rgba(10, 22, 40, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid #1a2744;
+  border-radius: 12px;
+}
+
+/* Gradient border via pseudo-element */
+.gradient-border {
+  position: relative;
+}
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(99,102,241,0.4), rgba(139,92,246,0.1), rgba(99,102,241,0.1));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Grid background */
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(99,102,241,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(99,102,241,0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Scan line effect */
+@keyframes scanLine {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(200vh); }
+}
+.scan-overlay::after {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(99,102,241,0.15), transparent);
+  animation: scanLine 8s linear infinite;
+  pointer-events: none;
+  z-index: 100;
+}
+
+/* Glow animations */
+@keyframes glowPulse {
+  0%, 100% { box-shadow: 0 0 10px currentColor; opacity: 0.8; }
+  50% { box-shadow: 0 0 24px currentColor, 0 0 48px currentColor; opacity: 1; }
+}
+.glow-pulse { animation: glowPulse 2s ease-in-out infinite; }
+
+/* Number counter animation */
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* Score ring segments */
+@keyframes dashAppear {
+  from { stroke-dasharray: 0 1000; }
+}
+
+/* Emergency pulse */
+@keyframes emergencyPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.emergency-blink { animation: emergencyPulse 0.8s ease-in-out infinite; }
+
+/* Ticker */
+@keyframes ticker {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.ticker-track { animation: ticker 30s linear infinite; }
+.ticker-track:hover { animation-play-state: paused; }
