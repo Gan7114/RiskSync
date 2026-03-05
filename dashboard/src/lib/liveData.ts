@@ -146,9 +146,12 @@ export async function fetchLiveSnapshot(): Promise<Partial<OracleSnapshot>> {
     try {
       // 2% deviation query (200 bps)
       const [costUsd, secScore] = await mco.getManipulationCost(BigInt(200));
+      // costUsd is in 8-decimal USD (same precision as Chainlink price feeds).
+      // Divide at BigInt level to avoid Number precision loss on large values.
+      const costUsdScaled = Number((costUsd as bigint) / BigInt(100_000_000));
       result.mco = {
         score: Math.min(100, bn(secScore as bigint)),
-        costUsd: bn(costUsd as bigint),
+        costUsd: costUsdScaled,
         borrowRateBps: result.mco?.borrowRateBps ?? 500,
       };
     } catch {
@@ -190,11 +193,12 @@ export async function fetchLiveSnapshot(): Promise<Partial<OracleSnapshot>> {
       // 20% price shock (2000 bps), Sepolia WETH
       const res = await cplcs.getCascadeScore(ADDRESSES.WETH, BigInt(2000));
       // (totalCollateralUsd, estimatedLiquidationUsd, secondaryImpactBps, totalImpactBps, amplificationBps, cascadeScore)
+      // totalCollateralUsd and estimatedLiquidationUsd are in 8-decimal USD.
       result.cplcs = {
         score: Math.min(100, bn(res[5] as bigint)),
-        totalCollateralUsd: bn(res[0] as bigint),
+        totalCollateralUsd: Number((res[0] as bigint) / BigInt(100_000_000)),
         amplificationBps: bn(res[4] as bigint) || 10000,
-        estimatedLiquidationUsd: bn(res[1] as bigint),
+        estimatedLiquidationUsd: Number((res[1] as bigint) / BigInt(100_000_000)),
       };
     } catch {
       // leave mock
