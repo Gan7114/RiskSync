@@ -10,6 +10,7 @@ import ScoreChart from "@/components/ScoreChart";
 import EWMAPanel from "@/components/EWMAPanel";
 import StressPanel from "@/components/StressPanel";
 import CircuitBreaker from "@/components/CircuitBreaker";
+import ChainlinkPanel from "@/components/ChainlinkPanel";
 import { motion } from "framer-motion";
 
 function formatUsd(n: number) {
@@ -181,12 +182,21 @@ export default function Dashboard() {
           />
         </motion.div>
 
-        {/* ── ROW 4: Stress + Circuit Breaker ────────────────────────────── */}
+        {/* ── ROW 4: Chainlink Integration ────────────────────────────── */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.35 }}
+        >
+          <ChainlinkPanel data={data.chainlink} />
+        </motion.div>
+
+        {/* ── ROW 5: Stress + Circuit Breaker ────────────────────────────── */}
         <motion.div
           className="grid grid-cols-1 lg:grid-cols-3 gap-4"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.35 }}
+          transition={{ duration: 0.5, delay: 0.4 }}
         >
           <div className="lg:col-span-2">
             <StressPanel scenarios={data.scenarios} />
@@ -202,8 +212,10 @@ export default function Dashboard() {
 
         {/* ── Footer ─────────────────────────────────────────────────────── */}
         <div className="text-center text-[10px] text-slate-700 py-4 border-t border-[#1a2744]">
-          DEFISTRESSORACLE · 4-PILLAR ON-CHAIN RISK MIDDLEWARE · 125 UNIT TESTS ·{" "}
+          DEFISTRESSORACLE · 4-PILLAR ON-CHAIN RISK MIDDLEWARE · 179 UNIT TESTS ·{" "}
           <span className="text-indigo-700">MCO 30% + TDRV 35% + CPLCS 20% + TCO 15%</span>
+          {" "}·{" "}
+          <span className="text-[#375bd2]">Chainlink Price Feeds + Automation + CCIP</span>
         </div>
 
       </main>

@@ -2419,3 +2419,642 @@ contract URCWithTCOTest is Test {
         assertEq(urc.tcoWeight(),  15);
     }
 }
+
+// ============================================================================
+// Mock contracts for new Chainlink integration tests
+// ============================================================================
+
+import {ChainlinkVolatilityOracle} from "../../src/ChainlinkVolatilityOracle.sol";
+import {AutomatedRiskUpdater} from "../../src/AutomatedRiskUpdater.sol";
+import {CrossChainRiskBroadcaster} from "../../src/CrossChainRiskBroadcaster.sol";
+import {Client} from "@chainlink/contracts-ccip/libraries/Client.sol";
+
+/// @dev Mock Chainlink AggregatorV3 price feed.
+contract MockAggregatorV3 {
+    string  public description = "ETH / USD";
+    uint8   public decimals    = 8;
+
+    struct RoundData {
+        uint80  roundId;
+        int256  answer;
+        uint256 startedAt;
+        uint256 updatedAt;
+        uint80  answeredInRound;
+    }
+
+    RoundData[] public rounds; // index 0 = oldest
+    uint80 public latestRound;
+
+    function pushRound(uint80 roundId, int256 answer, uint256 updatedAt) external {
+        rounds.push(RoundData(roundId, answer, updatedAt, updatedAt, roundId));
+        latestRound = roundId;
+    }
+
+    function latestRoundData() external view returns (
+        uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound
+    ) {
+        require(rounds.length > 0, "no rounds");
+        RoundData storage r = rounds[rounds.length - 1];
+        return (r.roundId, r.answer, r.startedAt, r.updatedAt, r.answeredInRound);
+    }
+
+    function getRoundData(uint80 _roundId) external view returns (
+        uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound
+    ) {
+        // Linear scan - ok for tests
+        for (uint256 i = 0; i < rounds.length; i++) {
+            if (rounds[i].roundId == _roundId) {
+                RoundData storage r = rounds[i];
+                return (r.roundId, r.answer, r.startedAt, r.updatedAt, r.answeredInRound);
+            }
+        }
+        revert("round not found");
+    }
+}
+
+/// @dev Mock compositor for AutomatedRiskUpdater tests.
+contract MockCompositorForARU {
+    uint256 public riskScore;
+    uint8   public riskTier;
+    uint256 public recommendedLtv;
+    uint256 public callCount;
+
+    function setValues(uint256 score, uint8 tier, uint256 ltv) external {
+        riskScore = score;
+        riskTier  = tier;
+        recommendedLtv = ltv;
+    }
+
+    function updateRiskScore() external returns (uint256, uint8, uint256) {
+        callCount++;
+        return (riskScore, riskTier, recommendedLtv);
+    }
+
+    function getRiskScore() external view returns (uint256) { return riskScore; }
+    function getRiskTier()  external view returns (uint8)   { return riskTier; }
+    function getRecommendedLtv() external view returns (uint256) { return recommendedLtv; }
+}
+
+/// @dev Mock circuit breaker for AutomatedRiskUpdater tests.
+contract MockCircuitBreakerForARU {
+    uint8  public currentLevel_;
+    bool   public inCooldown_;
+    bool   public levelChanged_;
+    uint256 public respondCallCount;
+
+    function setLevel(uint8 level) external { currentLevel_ = level; }
+    function setCooldown(bool v) external   { inCooldown_ = v; }
+    function setLevelChanged(bool v) external { levelChanged_ = v; }
+
+    function checkAndRespond() external returns (bool) {
+        respondCallCount++;
+        return levelChanged_;
+    }
+    function isInCooldown() external view returns (bool) { return inCooldown_; }
+    function currentLevel() external view returns (uint8) { return currentLevel_; }
+}
+
+/// @dev Mock CCIP Router for CrossChainRiskBroadcaster tests.
+///      Implements IRouterClient with proper Client.EVM2AnyMessage structs.
+contract MockCCIPRouter {
+    bytes32 public lastMessageId = keccak256("test-message-id");
+    uint256 public feeToReturn = 0.01 ether;
+    bool    public chainSupported = true;
+    uint256 public sendCallCount;
+
+    struct SentMessage {
+        uint64  destChain;
+        uint256 fee;
+    }
+    SentMessage[] public sentMessages;
+
+    function getFee(uint64, Client.EVM2AnyMessage memory) external view returns (uint256) {
+        return feeToReturn;
+    }
+
+    function isChainSupported(uint64) external view returns (bool) {
+        return chainSupported;
+    }
+
+    function ccipSend(uint64 destChain, Client.EVM2AnyMessage calldata) external payable returns (bytes32) {
+        sendCallCount++;
+        sentMessages.push(SentMessage(destChain, msg.value));
+        return lastMessageId;
+    }
+
+    function setFee(uint256 fee) external { feeToReturn = fee; }
+    function setChainSupported(bool v) external { chainSupported = v; }
+    function sentCount() external view returns (uint256) { return sentMessages.length; }
+}
+
+// ============================================================================
+// ChainlinkVolatilityOracle Tests
+// ============================================================================
+
+contract ChainlinkVolatilityOracleTest is Test {
+    MockAggregatorV3 feed;
+    uint32 constant STALENESS = 86400; // 24h
+    uint8  constant SAMPLES   = 8;
+
+    function setUp() public {
+        vm.warp(1_700_000_000);
+        feed = new MockAggregatorV3();
+    }
+
+    function _deploy() internal returns (ChainlinkVolatilityOracle) {
+        return new ChainlinkVolatilityOracle(address(feed), SAMPLES, STALENESS);
+    }
+
+    function _pushRounds(uint256 n, int256 basePrice, int256 stepBps) internal {
+        uint256 now_ = block.timestamp;
+        for (uint256 i = 0; i < n; i++) {
+            uint80 rid = uint80(i + 1);
+            int256 price = basePrice + (basePrice * stepBps * int256(i)) / 10_000;
+            feed.pushRound(rid, price, now_ - (n - i) * 3600);
+        }
+    }
+
+    // ── constructor rejects bad params ────────────────────────────────────────
+
+    function test_constructor_rejectsZeroFeed() public {
+        vm.expectRevert("CVO: zero feed");
+        new ChainlinkVolatilityOracle(address(0), SAMPLES, STALENESS);
+    }
+
+    function test_constructor_rejectsTooFewSamples() public {
+        vm.expectRevert("CVO: min 4 samples");
+        new ChainlinkVolatilityOracle(address(feed), 3, STALENESS);
+    }
+
+    function test_constructor_rejectsTooManySamples() public {
+        vm.expectRevert("CVO: max 48 samples");
+        new ChainlinkVolatilityOracle(address(feed), 49, STALENESS);
+    }
+
+    function test_constructor_rejectsLowStaleness() public {
+        vm.expectRevert("CVO: min 1h staleness");
+        new ChainlinkVolatilityOracle(address(feed), SAMPLES, 3599);
+    }
+
+    function test_constructor_storesParams() public {
+        ChainlinkVolatilityOracle cvo = _deploy();
+        assertEq(cvo.numSamples(), SAMPLES);
+        assertEq(cvo.maxStalenessSeconds(), STALENESS);
+        assertEq(cvo.feedDecimals(), 8);
+    }
+
+    // ── getRealizedVolatility with stable prices → low vol ───────────────────
+
+    function test_realizedVol_stablePrices_isLow() public {
+        _pushRounds(SAMPLES, 2000e8, 0); // all same price
+        ChainlinkVolatilityOracle cvo = _deploy();
+        uint256 vol = cvo.getRealizedVolatility();
+        assertEq(vol, 0, "zero return = zero vol");
+    }
+
+    // ── getRealizedVolatility with rising prices → nonzero vol ───────────────
+
+    function test_realizedVol_risingPrices_isNonzero() public {
+        _pushRounds(SAMPLES, 2000e8, 100); // +1% per step
+        ChainlinkVolatilityOracle cvo = _deploy();
+        uint256 vol = cvo.getRealizedVolatility();
+        assertGt(vol, 0, "trending prices = positive vol");
+    }
+
+    // ── getVolatilityScore maps to 0-100 range ────────────────────────────────
+
+    function test_volScore_belowLow_isZero() public {
+        _pushRounds(SAMPLES, 2000e8, 0);
+        ChainlinkVolatilityOracle cvo = _deploy();
+        uint256 score = cvo.getVolatilityScore(500, 5000);
+        assertEq(score, 0);
+    }
+
+    function test_volScore_aboveHigh_is100() public {
+        _pushRounds(SAMPLES, 2000e8, 1000); // +10% per step = extreme vol
+        ChainlinkVolatilityOracle cvo = _deploy();
+        uint256 score = cvo.getVolatilityScore(0, 1); // threshold so low any vol = 100
+        assertEq(score, 100);
+    }
+
+    function test_volScore_rejectsInvertedThresholds() public {
+        _pushRounds(SAMPLES, 2000e8, 100);
+        ChainlinkVolatilityOracle cvo = _deploy();
+        vm.expectRevert("CVO: bad thresholds");
+        cvo.getVolatilityScore(5000, 500);
+    }
+
+    // ── getVolatilityRegime classification ────────────────────────────────────
+
+    function test_regime_stablePrices_isCalm() public {
+        _pushRounds(SAMPLES, 2000e8, 0);
+        ChainlinkVolatilityOracle cvo = _deploy();
+        ChainlinkVolatilityOracle.VolatilityRegime regime = cvo.getVolatilityRegime();
+        assertEq(uint8(regime), uint8(ChainlinkVolatilityOracle.VolatilityRegime.CALM));
+    }
+
+    // ── getVolatilityWithConfidence reports correct round count ──────────────
+
+    function test_confidence_reportsRoundsUsed() public {
+        _pushRounds(SAMPLES, 2000e8, 50);
+        ChainlinkVolatilityOracle cvo = _deploy();
+        ChainlinkVolatilityOracle.VolatilityWithConfidence memory vc = cvo.getVolatilityWithConfidence();
+        assertEq(vc.numRoundsUsed, SAMPLES, "should use all pushed rounds");
+        assertGt(vc.latestPrice, 0);
+        assertGt(vc.oldestRoundAge, 0);
+    }
+
+    // ── getPriceFeedDetails returns feed metadata ─────────────────────────────
+
+    function test_priceFeedDetails() public {
+        _pushRounds(SAMPLES, 2000e8, 0);
+        ChainlinkVolatilityOracle cvo = _deploy();
+        (string memory desc, uint8 dec, uint256 price, uint80 roundId) = cvo.getPriceFeedDetails();
+        assertEq(dec, 8);
+        assertGt(price, 0);
+        assertGt(roundId, 0);
+        assertTrue(bytes(desc).length > 0);
+    }
+
+    // ── stale round reverts ───────────────────────────────────────────────────
+
+    function test_staleRound_reverts() public {
+        // Push a round with old timestamp
+        feed.pushRound(1, 2000e8, block.timestamp - STALENESS - 1);
+        ChainlinkVolatilityOracle cvo = _deploy();
+        vm.expectRevert("CVO: latest round stale");
+        cvo.getRealizedVolatility();
+    }
+}
+
+// ============================================================================
+// AutomatedRiskUpdater Tests
+// ============================================================================
+
+contract AutomatedRiskUpdaterTest is Test {
+    MockCompositorForARU   compositor;
+    MockCircuitBreakerForARU cb;
+    uint256 constant INTERVAL = 300; // 5 min
+
+    function setUp() public {
+        vm.warp(10_000);
+        compositor = new MockCompositorForARU();
+        cb = new MockCircuitBreakerForARU();
+        compositor.setValues(55, 2, 7000);
+        cb.setLevelChanged(true);
+    }
+
+    function _deploy() internal returns (AutomatedRiskUpdater) {
+        return new AutomatedRiskUpdater(address(compositor), address(cb), INTERVAL);
+    }
+
+    // ── constructor validation ────────────────────────────────────────────────
+
+    function test_constructor_rejectsZeroCompositor() public {
+        vm.expectRevert("ARU: zero compositor");
+        new AutomatedRiskUpdater(address(0), address(cb), INTERVAL);
+    }
+
+    function test_constructor_rejectsZeroCB() public {
+        vm.expectRevert("ARU: zero circuit breaker");
+        new AutomatedRiskUpdater(address(compositor), address(0), INTERVAL);
+    }
+
+    function test_constructor_rejectsShortInterval() public {
+        vm.expectRevert("ARU: min 60s interval");
+        new AutomatedRiskUpdater(address(compositor), address(cb), 59);
+    }
+
+    function test_constructor_storesOwner() public {
+        AutomatedRiskUpdater aru = _deploy();
+        assertEq(aru.owner(), address(this));
+    }
+
+    // ── checkUpkeep logic ─────────────────────────────────────────────────────
+
+    function test_checkUpkeep_falseWhenPaused() public {
+        AutomatedRiskUpdater aru = _deploy();
+        aru.pause();
+        (bool needed,) = aru.checkUpkeep("");
+        assertFalse(needed);
+    }
+
+    function test_checkUpkeep_falseWhenTooSoon() public {
+        AutomatedRiskUpdater aru = _deploy();
+        (bool needed,) = aru.checkUpkeep("");
+        assertTrue(needed); // Initially true (no previous upkeep)
+        aru.performUpkeep("");
+        (needed,) = aru.checkUpkeep("");
+        assertFalse(needed, "should be false right after performUpkeep");
+    }
+
+    function test_checkUpkeep_trueAfterInterval() public {
+        AutomatedRiskUpdater aru = _deploy();
+        aru.performUpkeep("");
+        vm.warp(block.timestamp + INTERVAL + 1);
+        (bool needed,) = aru.checkUpkeep("");
+        assertTrue(needed);
+    }
+
+    function test_checkUpkeep_falseWhenInCooldown() public {
+        AutomatedRiskUpdater aru = _deploy();
+        cb.setCooldown(true);
+        (bool needed,) = aru.checkUpkeep("");
+        assertFalse(needed);
+    }
+
+    // ── performUpkeep execution ───────────────────────────────────────────────
+
+    function test_performUpkeep_callsCompositorAndCB() public {
+        AutomatedRiskUpdater aru = _deploy();
+        aru.performUpkeep("");
+        assertEq(compositor.callCount(), 1);
+        assertEq(cb.respondCallCount(), 1);
+        assertEq(aru.upkeepCount(), 1);
+    }
+
+    function test_performUpkeep_updatestimestamp() public {
+        AutomatedRiskUpdater aru = _deploy();
+        uint256 before = aru.lastUpkeepTimestamp();
+        aru.performUpkeep("");
+        assertEq(aru.lastUpkeepTimestamp(), block.timestamp);
+        assertGt(aru.lastUpkeepTimestamp(), before);
+    }
+
+    function test_performUpkeep_rejectsWhenPaused() public {
+        AutomatedRiskUpdater aru = _deploy();
+        aru.pause();
+        vm.expectRevert("ARU: paused");
+        aru.performUpkeep("");
+    }
+
+    function test_performUpkeep_rejectsWhenTooSoon() public {
+        AutomatedRiskUpdater aru = _deploy();
+        aru.performUpkeep("");
+        vm.expectRevert("ARU: too soon");
+        aru.performUpkeep(""); // immediate second call
+    }
+
+    function test_performUpkeep_skipsCBWhenInCooldown() public {
+        AutomatedRiskUpdater aru = _deploy();
+        cb.setCooldown(true);
+        aru.performUpkeep(""); // should not call checkAndRespond
+        assertEq(cb.respondCallCount(), 0);
+        assertEq(compositor.callCount(), 1); // compositor still called
+    }
+
+    // ── owner functions ────────────────────────────────────────────────────────
+
+    function test_pause_unpause() public {
+        AutomatedRiskUpdater aru = _deploy();
+        aru.pause();
+        assertTrue(aru.paused());
+        aru.unpause();
+        assertFalse(aru.paused());
+    }
+
+    function test_pause_onlyOwner() public {
+        AutomatedRiskUpdater aru = _deploy();
+        vm.prank(address(0xBEEF));
+        vm.expectRevert("ARU: not owner");
+        aru.pause();
+    }
+
+    function test_setInterval_updatesValue() public {
+        AutomatedRiskUpdater aru = _deploy();
+        aru.setUpdateInterval(600);
+        assertEq(aru.updateIntervalSeconds(), 600);
+    }
+
+    function test_setInterval_rejectsTooShort() public {
+        AutomatedRiskUpdater aru = _deploy();
+        vm.expectRevert("ARU: min 60s");
+        aru.setUpdateInterval(59);
+    }
+
+    // ── view helpers ──────────────────────────────────────────────────────────
+
+    function test_secondsUntilNextUpkeep_zeroWhenEligible() public {
+        AutomatedRiskUpdater aru = _deploy();
+        assertEq(aru.secondsUntilNextUpkeep(), 0); // never performed = 0
+    }
+
+    function test_secondsUntilNextUpkeep_afterPerform() public {
+        AutomatedRiskUpdater aru = _deploy();
+        aru.performUpkeep("");
+        uint256 remaining = aru.secondsUntilNextUpkeep();
+        assertEq(remaining, INTERVAL); // full interval remaining
+    }
+
+    function test_currentRiskScore() public {
+        AutomatedRiskUpdater aru = _deploy();
+        assertEq(aru.currentRiskScore(), 55);
+    }
+}
+
+// ============================================================================
+// CrossChainRiskBroadcaster Tests
+// ============================================================================
+
+contract CrossChainRiskBroadcasterTest is Test {
+    MockCCIPRouter         router;
+    MockCompositorForARU   compositor;
+    MockCircuitBreakerForARU cb;
+
+    uint64 constant CHAIN_BASE    = 15_971_525_489_660_198_913;
+    uint64 constant CHAIN_ARB     = 4_949_039_107_694_359_620;
+    address constant RECEIVER     = address(0x1234);
+
+    function setUp() public {
+        vm.warp(1_700_000_000);
+        router    = new MockCCIPRouter();
+        compositor = new MockCompositorForARU();
+        cb         = new MockCircuitBreakerForARU();
+        compositor.setValues(80, 3, 6000);
+        cb.setLevel(3); // DANGER
+    }
+
+    function _deploy() internal returns (CrossChainRiskBroadcaster) {
+        return new CrossChainRiskBroadcaster(
+            address(router), address(compositor), address(cb)
+        );
+    }
+
+    // ── constructor validation ────────────────────────────────────────────────
+
+    function test_constructor_rejectsZeroCompositor() public {
+        vm.expectRevert("CCRB: zero compositor");
+        new CrossChainRiskBroadcaster(address(router), address(0), address(cb));
+    }
+
+    function test_constructor_rejectsZeroCB() public {
+        vm.expectRevert("CCRB: zero circuit breaker");
+        new CrossChainRiskBroadcaster(address(router), address(compositor), address(0));
+    }
+
+    function test_constructor_storesOwnerAndThreshold() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        assertEq(ccrb.owner(), address(this));
+        assertEq(ccrb.broadcastThreshold(), 2); // WARNING
+    }
+
+    // ── destination management ────────────────────────────────────────────────
+
+    function test_addDestination_storesIt() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        ccrb.addDestination(CHAIN_BASE, RECEIVER);
+        assertEq(ccrb.destinationCount(), 1);
+    }
+
+    function test_addDestination_rejectsDuplicate() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        ccrb.addDestination(CHAIN_BASE, RECEIVER);
+        vm.expectRevert("CCRB: already exists");
+        ccrb.addDestination(CHAIN_BASE, RECEIVER);
+    }
+
+    function test_addDestination_rejectsZeroReceiver() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        vm.expectRevert("CCRB: zero receiver");
+        ccrb.addDestination(CHAIN_BASE, address(0));
+    }
+
+    function test_addDestination_onlyOwner() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        vm.prank(address(0xBEEF));
+        vm.expectRevert("CCRB: not owner");
+        ccrb.addDestination(CHAIN_BASE, RECEIVER);
+    }
+
+    function test_removeDestination_setsInactive() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        ccrb.addDestination(CHAIN_BASE, RECEIVER);
+        ccrb.removeDestination(CHAIN_BASE);
+        (,, bool active) = ccrb.destinations(0);
+        assertFalse(active);
+    }
+
+    function test_removeDestination_rejectsUnknown() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        vm.expectRevert("CCRB: not found");
+        ccrb.removeDestination(CHAIN_BASE);
+    }
+
+    // ── setBroadcastThreshold ─────────────────────────────────────────────────
+
+    function test_setBroadcastThreshold_updatesValue() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        ccrb.setBroadcastThreshold(3);
+        assertEq(ccrb.broadcastThreshold(), 3);
+    }
+
+    function test_setBroadcastThreshold_rejectsAbove4() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        vm.expectRevert("CCRB: invalid threshold");
+        ccrb.setBroadcastThreshold(5);
+    }
+
+    // ── broadcastTo sends via CCIP ────────────────────────────────────────────
+
+    function test_broadcastTo_sendsMessage() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        ccrb.addDestination(CHAIN_BASE, RECEIVER);
+
+        uint256 fee = router.feeToReturn();
+        vm.deal(address(this), fee + 1 ether);
+
+        bytes32 msgId = ccrb.broadcastTo{value: fee}(CHAIN_BASE);
+        assertEq(msgId, router.lastMessageId());
+        assertEq(router.sendCallCount(), 1);
+        assertEq(ccrb.broadcastCount(), 1);
+    }
+
+    function test_broadcastTo_refundsExcess() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        ccrb.addDestination(CHAIN_BASE, RECEIVER);
+
+        uint256 fee = router.feeToReturn();
+        uint256 overpay = fee + 0.5 ether;
+        vm.deal(address(this), overpay);
+
+        uint256 balanceBefore = address(this).balance;
+        ccrb.broadcastTo{value: overpay}(CHAIN_BASE);
+        uint256 refund = address(this).balance - (balanceBefore - overpay);
+        assertEq(refund, 0.5 ether, "should refund excess ETH");
+    }
+
+    function test_broadcastTo_rejectsUnknownChain() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        vm.expectRevert("CCRB: unknown destination");
+        ccrb.broadcastTo{value: 1 ether}(CHAIN_BASE);
+    }
+
+    function test_broadcastTo_rejectsInactiveDestination() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        ccrb.addDestination(CHAIN_BASE, RECEIVER);
+        ccrb.removeDestination(CHAIN_BASE);
+        vm.deal(address(this), 1 ether);
+        vm.expectRevert("CCRB: destination inactive");
+        ccrb.broadcastTo{value: 1 ether}(CHAIN_BASE);
+    }
+
+    // ── broadcastToAll iterates destinations ─────────────────────────────────
+
+    function test_broadcastToAll_sendsToActiveDestinations() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        ccrb.addDestination(CHAIN_BASE, RECEIVER);
+        ccrb.addDestination(CHAIN_ARB,  address(0xAAAA));
+
+        router.setFee(0.01 ether);
+        uint256 totalNeeded = 0.02 ether;
+        vm.deal(address(this), totalNeeded + 0.1 ether);
+
+        uint256 spent = ccrb.broadcastToAll{value: totalNeeded + 0.1 ether}();
+        assertEq(spent, totalNeeded, "should spend exactly 2x fee");
+        assertEq(router.sendCallCount(), 2, "should send to 2 chains");
+    }
+
+    function test_broadcastToAll_skipsInactiveDestination() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        ccrb.addDestination(CHAIN_BASE, RECEIVER);
+        ccrb.addDestination(CHAIN_ARB,  address(0xAAAA));
+        ccrb.removeDestination(CHAIN_BASE); // deactivate first
+
+        router.setFee(0.01 ether);
+        vm.deal(address(this), 1 ether);
+
+        ccrb.broadcastToAll{value: 0.1 ether}();
+        assertEq(router.sendCallCount(), 1, "should only send to active chain");
+    }
+
+    function test_broadcastToAll_rejectsBelowThreshold() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        ccrb.addDestination(CHAIN_BASE, RECEIVER);
+        cb.setLevel(0); // NOMINAL — below threshold of 2
+
+        vm.deal(address(this), 1 ether);
+        vm.expectRevert("CCRB: below threshold");
+        ccrb.broadcastToAll{value: 1 ether}();
+    }
+
+    // ── estimateFee delegates to router ───────────────────────────────────────
+
+    function test_estimateFee_returnsRouterFee() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        ccrb.addDestination(CHAIN_BASE, RECEIVER);
+        uint256 fee = ccrb.estimateFee(CHAIN_BASE);
+        assertEq(fee, router.feeToReturn());
+    }
+
+    // ── receive() allows ETH deposit ──────────────────────────────────────────
+
+    function test_receive_acceptsETH() public {
+        CrossChainRiskBroadcaster ccrb = _deploy();
+        vm.deal(address(this), 1 ether);
+        (bool ok,) = address(ccrb).call{value: 0.5 ether}("");
+        assertTrue(ok);
+        assertEq(address(ccrb).balance, 0.5 ether);
+    }
+
+    receive() external payable {}
+}

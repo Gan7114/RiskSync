@@ -10,6 +10,9 @@ import {TickConcentrationOracle}         from "../src/TickConcentrationOracle.so
 import {UnifiedRiskCompositor}           from "../src/UnifiedRiskCompositor.sol";
 import {LendingProtocolCircuitBreaker}   from "../src/RiskCircuitBreaker.sol";
 import {StressScenarioRegistry}          from "../src/StressScenarioRegistry.sol";
+import {ChainlinkVolatilityOracle}       from "../src/ChainlinkVolatilityOracle.sol";
+import {AutomatedRiskUpdater}            from "../src/AutomatedRiskUpdater.sol";
+import {CrossChainRiskBroadcaster}       from "../src/CrossChainRiskBroadcaster.sol";
 
 /// @title Deploy
 /// @notice Deploys the full DeFiStressOracle system to Ethereum mainnet.
@@ -45,12 +48,14 @@ contract Deploy is Script {
 
     // ─── Mainnet addresses ─────────────────────────────────────────────────────
 
-    address constant WETH_USDC_POOL = 0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640;
-    address constant ETH_USD_FEED   = 0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419;
-    address constant AAVE_DATA_PROV = 0x7B4EB56E7CD4b454BA8ff71E4518426369a138a3;
-    address constant WETH           = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-    address constant COMPOUND_COMET = 0xc3d688B66703497DAA19211EEdff47f25384cdc3;
-    address constant MORPHO_BLUE    = 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb;
+    address constant WETH_USDC_POOL  = 0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640;
+    address constant ETH_USD_FEED    = 0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419;
+    address constant AAVE_DATA_PROV  = 0x7B4EB56E7CD4b454BA8ff71E4518426369a138a3;
+    address constant WETH            = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address constant COMPOUND_COMET  = 0xc3d688B66703497DAA19211EEdff47f25384cdc3;
+    address constant MORPHO_BLUE     = 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb;
+    // Chainlink CCIP Router (Ethereum mainnet):
+    address constant CCIP_ROUTER     = 0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D;
 
     bytes32 constant MORPHO_MARKET_ID =
         0x7dde86a1e94561d9690ec678db673c1a6396365f19254b3b3f5fd20e6bc12765;
@@ -77,6 +82,13 @@ contract Deploy is Script {
     // TCO: tick concentration oracle window + samples (24h, hourly buckets).
     uint32 constant TCO_WINDOW      = 24 hours;
     uint8  constant TCO_NUM_SAMPLES = 24;
+
+    // Chainlink Volatility Oracle: 24 hourly samples, 25-hour staleness window.
+    uint8  constant CVO_SAMPLES     = 24;
+    uint32 constant CVO_STALENESS   = 25 hours;
+
+    // AutomatedRiskUpdater: 5-minute heartbeat for on-chain risk score updates.
+    uint256 constant ARU_INTERVAL   = 5 minutes;
 
     // URC weights (must sum to 100, 4-pillar mode with TCO enabled):
     //   MCO   30% — oracle economic security (primary for TWAP-reliant protocols)
@@ -198,6 +210,37 @@ contract Deploy is Script {
         );
         console2.log("ScenarioRegistry deployed:", address(ssr));
 
+        // ── 8. ChainlinkVolatilityOracle ──────────────────────────────────────
+        // Uses Chainlink ETH/USD Price Feed with 24 historical rounds to compute
+        // realized volatility independently of Uniswap V3's on-chain data.
+        ChainlinkVolatilityOracle cvo = new ChainlinkVolatilityOracle(
+            ETH_USD_FEED,
+            CVO_SAMPLES,
+            CVO_STALENESS
+        );
+        console2.log("ChainlinkVolOracle deployed:", address(cvo));
+
+        // ── 9. AutomatedRiskUpdater ───────────────────────────────────────────
+        // Chainlink Automation keeper: calls URC.updateRiskScore() and
+        // CircuitBreaker.checkAndRespond() every 5 minutes on-chain.
+        AutomatedRiskUpdater aru = new AutomatedRiskUpdater(
+            address(urc),
+            address(cb),
+            ARU_INTERVAL
+        );
+        console2.log("AutomatedRiskUpdater deployed:", address(aru));
+        console2.log("ARU owner:", aru.owner());
+
+        // ── 10. CrossChainRiskBroadcaster ─────────────────────────────────────
+        // Chainlink CCIP: propagates composite risk scores and alert levels
+        // to Base, Arbitrum, Optimism, and Polygon on threshold breach.
+        CrossChainRiskBroadcaster ccrb = new CrossChainRiskBroadcaster(
+            CCIP_ROUTER,
+            address(urc),
+            address(cb)
+        );
+        console2.log("CrossChainBroadcaster deployed:", address(ccrb));
+
         vm.stopBroadcast();
 
         // ─── Deployment summary ────────────────────────────────────────────────
@@ -209,6 +252,9 @@ contract Deploy is Script {
         console2.log("UnifiedRiskCompositor:         ", address(urc));
         console2.log("LendingProtocolCircuitBreaker: ", address(cb));
         console2.log("StressScenarioRegistry:        ", address(ssr));
+        console2.log("ChainlinkVolatilityOracle:     ", address(cvo));
+        console2.log("AutomatedRiskUpdater:          ", address(aru));
+        console2.log("CrossChainRiskBroadcaster:     ", address(ccrb));
         console2.log("==========================================");
         console2.log("Configuration:");
         console2.log("  Pool:          WETH/USDC 0.05%");

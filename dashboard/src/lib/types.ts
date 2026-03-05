@@ -72,6 +72,24 @@ export interface StressScenario {
   isWorstCase: boolean;
 }
 
+export interface ChainlinkData {
+  feedDescription: string;
+  feedPrice: number;       // USD (8-dec normalised)
+  feedRoundId: number;
+  cvoVolBps: number;       // annualised vol from CL Price Feeds
+  cvoRegime: VolatilityRegime;
+  numRoundsUsed: number;
+  oldestRoundAgeHours: number;
+  // Automation
+  lastUpkeepTimestamp: number;
+  nextUpkeepIn: number;    // seconds
+  upkeepCount: number;
+  // CCIP
+  ccipBroadcasts: number;
+  destinationCount: number;
+  broadcastThreshold: number;
+}
+
 export interface OracleSnapshot {
   compositeScore: number;
   alertLevel: AlertLevel;
@@ -85,6 +103,7 @@ export interface OracleSnapshot {
   cplcs: CPLCSData;
   tco: TCOData;
   circuitBreaker: CircuitBreakerData;
+  chainlink: ChainlinkData;
   scenarios: StressScenario[];
   blockNumber: number;
   timestamp: number;

@@ -1,9 +1,10 @@
 # DeFiStressOracle
 
-On-chain risk middleware for DeFi protocols — seven composable contracts that measure
+On-chain risk middleware for DeFi protocols — ten composable contracts that measure
 oracle manipulation cost, realized volatility, cross-protocol liquidation cascades, and
 tick-sequence entropy, then unify them into a single risk score with autonomous circuit
-breakers and historical stress-scenario replay.
+breakers, Chainlink-powered keepers, cross-chain alert propagation, and historical
+stress-scenario replay.
 
 ## Architecture
 
@@ -16,17 +17,20 @@ src/
 ├── UnifiedRiskCompositor.sol           — Weighted aggregator (4-pillar) + score history
 ├── RiskCircuitBreaker.sol              — Abstract base + LendingProtocolCircuitBreaker
 ├── StressScenarioRegistry.sol          — 5 historical crisis scenarios + custom support
+├── ChainlinkVolatilityOracle.sol       — Chainlink Price Feeds: historical realized vol
+├── AutomatedRiskUpdater.sol            — Chainlink Automation: 5-min keeper heartbeat
+├── CrossChainRiskBroadcaster.sol       — Chainlink CCIP: cross-chain risk alert relay
 ├── interfaces/
 │   └── IRiskConsumer.sol               — IRiskConsumer + IRiskScoreProvider
 └── libraries/
     └── TickMathLib.sol                 — Shared Uniswap V3 tick <-> sqrtPrice math
 
 test/foundry/
-├── NovelSystem.t.sol  — 125 unit tests (mock-based, no RPC needed)
+├── NovelSystem.t.sol  — 179 unit tests (mock-based, no RPC needed)
 └── ForkTests.t.sol    — Mainnet fork tests (auto-skip when MAINNET_RPC_URL unset)
 
 script/
-└── Deploy.s.sol       — One-shot mainnet deployment (all 7 contracts)
+└── Deploy.s.sol       — One-shot mainnet deployment (all 10 contracts)
 ```
 
 ## Composite Score Formula
@@ -235,6 +239,84 @@ registry.addCustomScenario(name, shockBps, volBps, devBps, description);
 
 ---
 
+## Chainlink Integration
+
+Three contracts add deep Chainlink product coverage on top of the four-pillar core.
+
+### ChainlinkVolatilityOracle — Price Feeds
+
+Independently verifies TDRV's Uniswap-derived volatility using **Chainlink Price Feeds**.
+Walks backwards through `getRoundData(roundId--)` over N historical rounds, computes
+simple returns, calculates variance, and annualizes with a √8760 factor (hourly rounds).
+Provides a second, off-chain-verified volatility signal that cross-checks the on-chain
+Uniswap observation ring-buffer — any divergence is a manipulation signal.
+
+```solidity
+uint256 volBps = cvo.getRealizedVolatility();             // annualised, BPS
+uint256 score  = cvo.getVolatilityScore(lowBps, highBps); // 0-100
+ChainlinkVolatilityOracle.VolatilityRegime regime = cvo.getVolatilityRegime();
+
+ChainlinkVolatilityOracle.VolatilityWithConfidence memory vc = cvo.getVolatilityWithConfidence();
+// vc.volBps, vc.numRoundsUsed, vc.latestPrice, vc.oldestRoundAge
+
+(string memory desc, uint8 dec, uint256 price, uint80 roundId) = cvo.getPriceFeedDetails();
+```
+
+Constructor:
+```solidity
+new ChainlinkVolatilityOracle(
+    address priceFeed,       // AggregatorV3Interface (e.g. ETH/USD)
+    uint8   numSamples,      // 4-48 historical rounds
+    uint32  maxStaleness     // min 3600 s
+)
+```
+
+### AutomatedRiskUpdater — Chainlink Automation
+
+Implements `AutomationCompatibleInterface` so a **Chainlink Automation** keeper calls
+`updateRiskScore()` and `checkAndRespond()` every 5 minutes — no off-chain bot required,
+no single point of failure, Sybil-resistant via the Chainlink DON.
+
+```solidity
+(bool upkeepNeeded, bytes memory) = aru.checkUpkeep("");
+aru.performUpkeep(""); // called by Automation Node
+
+uint256 count    = aru.upkeepCount();
+uint256 nextIn   = aru.secondsUntilNextUpkeep();
+uint256 score    = aru.currentRiskScore();
+```
+
+`checkUpkeep` returns `true` when:
+- Contract is not paused
+- `block.timestamp >= lastUpkeep + interval`
+- Circuit breaker is not in cooldown
+
+### CrossChainRiskBroadcaster — Chainlink CCIP
+
+Sends a `RiskPayload{compositeScore, alertLevel, ltvBps, timestamp, sourceContract}`
+to any registered L2 destination via **Chainlink CCIP** whenever the alert level is
+at or above the configured threshold (default: WARNING).
+
+```solidity
+// Register a destination chain
+ccrb.addDestination(chainSelector, receiverAddress);
+
+// Send to a single chain (with ETH for fee)
+bytes32 messageId = ccrb.broadcastTo{value: fee}(chainSelector);
+
+// Broadcast to all active destinations
+uint256 totalFeeSpent = ccrb.broadcastToAll{value: estimatedFee}();
+
+// Fee estimation
+uint256 fee = ccrb.estimateFee(chainSelector);
+```
+
+The receiver on any destination chain inherits `CCIPReceiver` and decodes the
+`RiskPayload`, enabling native on-chain risk-aware execution on Base, Arbitrum,
+Optimism, or any CCIP-supported network.
+
+---
+
 ## Quickstart
 
 ```shell
@@ -244,7 +326,7 @@ curl -L https://foundry.paradigm.xyz | bash && foundryup
 # Build
 forge build
 
-# Unit tests (no RPC needed — 125 tests)
+# Unit tests (no RPC needed — 179 tests, 15 suites)
 forge test --match-path test/foundry/NovelSystem.t.sol -vvv
 
 # Mainnet fork tests (requires RPC)
@@ -262,7 +344,7 @@ forge script script/Deploy.s.sol \
   --verify
 ```
 
-Deploys all 7 contracts in dependency order and logs each address.
+Deploys all 10 contracts in dependency order and logs each address.
 
 ## Configuration
 
@@ -284,6 +366,7 @@ Deploys all 7 contracts in dependency order and logs each address.
 |-----------------|---------|
 | WETH/USDC pool (0.05%) | `0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640` |
 | ETH/USD Chainlink feed | `0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419` |
+| Chainlink CCIP Router | `0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D` |
 | Aave V3 PoolDataProvider | `0x7B4EB56E7CD4b454BA8ff71E4518426369a138a3` |
 | WETH | `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` |
 | Compound V3 USDC comet | `0xc3d688B66703497DAA19211EEdff47f25384cdc3` |

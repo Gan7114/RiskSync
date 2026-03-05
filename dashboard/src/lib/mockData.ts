@@ -113,6 +113,9 @@ let _ewma = 42;
 let _volBase = 4800;
 let _costBase = 14_000_000;
 let _blockNumber = 20_500_000;
+let _upkeepCount = 0;
+let _ccipBroadcasts = 0;
+let _lastUpkeepTs = Math.floor(Date.now() / 1000) - 180;
 
 export function generateSnapshot(): OracleSnapshot {
   _tick++;
@@ -177,6 +180,17 @@ export function generateSnapshot(): OracleSnapshot {
   const cooldownSecondsLeft = alertLevel >= 2 ? Math.floor(Math.random() * 240) : 0;
   const isInCooldown = cooldownSecondsLeft > 0;
 
+  // Chainlink simulation
+  const nowTs = Math.floor(Date.now() / 1000);
+  const cvoVolBps = clamp(Math.round(volBps * 1.08 + noise(200)), 800, 20000);
+  const feedPrice = clamp(3200 + Math.round(noise(200)), 2000, 5000);
+  const nextUpkeepIn = clamp(_lastUpkeepTs + 300 - nowTs, 0, 300);
+  if (nextUpkeepIn === 0) {
+    _upkeepCount++;
+    _lastUpkeepTs = nowTs;
+    if (alertLevel >= 2) _ccipBroadcasts++;
+  }
+
   return {
     compositeScore,
     alertLevel,
@@ -212,6 +226,21 @@ export function generateSnapshot(): OracleSnapshot {
       isInCooldown,
       cooldownSecondsLeft,
       alertLevel,
+    },
+    chainlink: {
+      feedDescription: "ETH / USD",
+      feedPrice,
+      feedRoundId: 110000 + _upkeepCount,
+      cvoVolBps,
+      cvoRegime: regimeFromVol(cvoVolBps),
+      numRoundsUsed: 24,
+      oldestRoundAgeHours: 24,
+      lastUpkeepTimestamp: _lastUpkeepTs,
+      nextUpkeepIn,
+      upkeepCount: _upkeepCount,
+      ccipBroadcasts: _ccipBroadcasts,
+      destinationCount: 3,
+      broadcastThreshold: 2,
     },
     scenarios: SCENARIOS,
     blockNumber: _blockNumber,
