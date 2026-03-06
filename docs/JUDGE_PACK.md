@@ -1,10 +1,10 @@
-# DeFiStressOracle — Judge Verification Pack
+# RiskSync — Judge Verification Pack
 
 ## TL;DR: Verify in 5 Minutes
 
 ```shell
 # 1. Clone & Install
-git clone <REPO_URL> && cd DeFiStressOracle
+git clone <REPO_URL> && cd RiskSync
 forge install                         # Foundry dependencies
 npm --prefix dashboard install        # Dashboard dependencies
 
@@ -170,14 +170,14 @@ Returns: `costUsd (8-decimal, divide by 1e8 for USD), securityScore (0-100)`
 
 ## LTV Impact Table: Static vs Dynamic Under Stress
 
-| Scenario | Static LTV (Industry Avg) | DeFiStressOracle Dynamic LTV | Risk Reduction |
+| Scenario | Static LTV (Industry Avg) | RiskSync Dynamic LTV | Risk Reduction |
 |----------|--------------------------|------------------------------|---------------|
 | Normal market (score 0–25) | 80% | **80%** — full capacity | None (no unnecessary restriction) |
 | Moderate volatility spike (score 26–50) | 80% (unchanged) | **75%** — 500 BPS tighter | Prevents ~$500M undercollateral at $10B TVL |
 | Sustained high vol / cascade (score 51–75) | 80% (unchanged) | **65%** — 1500 BPS tighter | Prevents ~$1.5B undercollateral |
 | Emergency (score 76–100) | 80% (unchanged) | **50%** + borrowing paused | Full liquidation cascade prevention |
 
-**Key point**: Static LTV protocols (Aave, Compound, most others) use the same LTV in normal markets AND during Black Thursday–style crashes. DeFiStressOracle tightens LTV *before* positions go underwater, not after.
+**Key point**: Static LTV protocols (Aave, Compound, most others) use the same LTV in normal markets AND during Black Thursday–style crashes. RiskSync tightens LTV *before* positions go underwater, not after.
 
 ---
 

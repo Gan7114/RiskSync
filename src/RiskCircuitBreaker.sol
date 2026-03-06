@@ -206,7 +206,7 @@ abstract contract RiskCircuitBreaker is IRiskConsumer {
 //  LendingProtocolCircuitBreaker
 //  Concrete reference implementation showing how a lending market inherits
 //  RiskCircuitBreaker to automatically adjust LTV caps and pause borrowing
-//  when DeFiStressOracle risk thresholds are crossed.
+//  when RiskSync risk thresholds are crossed.
 //
 //  This contract is deployable standalone and usable as-is for any protocol
 //  that wants to wire a risk score to LTV + borrow-pause logic.

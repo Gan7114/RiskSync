@@ -1,7 +1,7 @@
 {
-    "name": "defistressoracle-cre-workflow",
+    "name": "risksync-cre-workflow",
     "version": "1.0.0",
-    "description": "Chainlink CRE workflow for DeFiStressOracle composite risk alerts",
+    "description": "Chainlink CRE workflow for RiskSync composite risk alerts",
     "main": "index.ts",
     "scripts": {
         "setup": "PATH=\"$HOME/.bun/bin:$PATH\" ${BUN_BIN:-$HOME/.bun/bin/bun} ./node_modules/@chainlink/cre-sdk-javy-plugin/bin/setup.ts",

@@ -17,7 +17,7 @@ import {AssetRegistry}                   from "../src/AssetRegistry.sol";
 import {MultiAssetRiskRouter}            from "../src/MultiAssetRiskRouter.sol";
 
 /// @title DeploySepolia
-/// @notice Deploys the full DeFiStressOracle system to Ethereum Sepolia testnet.
+/// @notice Deploys the full RiskSync system to Ethereum Sepolia testnet.
 ///
 /// @dev Usage:
 ///        source .env
@@ -287,7 +287,7 @@ contract DeploySepolia is Script {
         vm.stopBroadcast();
 
         // ─── Deployment summary ────────────────────────────────────────────────
-        console2.log("\n=== DeFiStressOracle Sepolia Deployment Summary ===");
+        console2.log("\n=== RiskSync Sepolia Deployment Summary ===");
         console2.log("Network:                       Ethereum Sepolia (chainId 11155111)");
         console2.log("ManipulationCostOracle:        ", address(mco));
         console2.log("TickDerivedRealizedVolatility: ", address(tdrv));

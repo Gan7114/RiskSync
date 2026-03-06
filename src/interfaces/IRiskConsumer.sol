@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 /// @title IRiskConsumer
-/// @notice Standard interface for protocols that consume DeFiStressOracle risk data.
+/// @notice Standard interface for protocols that consume RiskSync risk data.
 ///         Implement this to integrate automatic risk-based parameter adjustment.
 /// @dev Any on-chain protocol (lending market, DEX, vault) should implement this
 ///      interface to be recognized by risk aggregators and automation networks.

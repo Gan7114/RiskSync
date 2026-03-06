@@ -8,7 +8,7 @@ import {Client}         from "@chainlink/contracts-ccip/libraries/Client.sol";
 // ============================================================================
 //  CrossChainRiskBroadcaster
 //
-//  Chainlink CCIP integration for DeFiStressOracle.
+//  Chainlink CCIP integration for RiskSync.
 //
 //  ── WHY CCIP? ───────────────────────────────────────────────────────────────
 //

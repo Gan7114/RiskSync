@@ -17,7 +17,7 @@ import {AssetRegistry}                   from "../src/AssetRegistry.sol";
 import {MultiAssetRiskRouter}            from "../src/MultiAssetRiskRouter.sol";
 
 /// @title Deploy
-/// @notice Deploys the full DeFiStressOracle system to Ethereum mainnet.
+/// @notice Deploys the full RiskSync system to Ethereum mainnet.
 ///
 /// @dev Usage:
 ///        forge script script/Deploy.s.sol \
@@ -320,7 +320,7 @@ contract Deploy is Script {
         vm.stopBroadcast();
 
         // ─── Deployment summary ────────────────────────────────────────────────
-        console2.log("\n=== DeFiStressOracle Deployment Summary ===");
+        console2.log("\n=== RiskSync Deployment Summary ===");
         console2.log("ManipulationCostOracle:        ", address(mco));
         console2.log("TickDerivedRealizedVolatility: ", address(tdrv));
         console2.log("CrossProtocolCascadeScore:     ", address(cplcs));

@@ -1,4 +1,4 @@
-# DeFiStressOracle
+# RiskSync
 
 **Chainlink Convergence 2026 Hackathon Submission — Risk & Compliance Track**
 

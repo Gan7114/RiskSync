@@ -46,7 +46,7 @@ contract RegisterUpkeep is Script {
         // 2. Register Upkeep
         console2.log("Registering AutomatedRiskUpdater upkeep...");
         AutomationRegistrar2_1.RegistrationParams memory params = AutomationRegistrar2_1.RegistrationParams({
-            name: "DeFiStressOracle ARU",
+            name: "RiskSync ARU",
             encryptedEmail: new bytes(0),
             upkeepContract: ARU,
             gasLimit: 3000000,

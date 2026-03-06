@@ -1,4 +1,4 @@
-# DeFiStressOracle — Competitive Edge
+# RiskSync — Competitive Edge
 
 ## What Is Genuinely Novel
 
@@ -14,7 +14,7 @@
 |----------|------------------|-----------|-----------|
 | Gauntlet / Chaos Labs | Monte Carlo simulation | Hours-old | ❌ Off-chain |
 | Standard TWAP oracle | None | N/A | ❌ |
-| **DeFiStressOracle MCO** | Exact tick-bitmap walk | Current block | ✅ |
+| **RiskSync MCO** | Exact tick-bitmap walk | Current block | ✅ |
 
 ---
 
@@ -30,7 +30,7 @@
 |-----------------|--------------------|-----------------------|-----------|
 | TWAP-vs-spot deviation | High (normal market vol triggers it) | ❌ Reactive | ✅ |
 | Circuit breakers (Chainlink RMN) | Low | ❌ Reactive | ✅ |
-| **DeFiStressOracle TCO** | Low (entropy, not price) | ✅ Proactive | ✅ |
+| **RiskSync TCO** | Low (entropy, not price) | ✅ Proactive | ✅ |
 
 ---
 
@@ -53,7 +53,7 @@
 |-----------|--------------|-----------------|-------------------|
 | Gauntlet risk param updates | Hours-days | Governance vote required | ❌ |
 | Aave Guardian (emergency) | Minutes | Multisig required | Partial |
-| **DeFiStressOracle CircuitBreaker** | **Same block** | **None** | ✅ |
+| **RiskSync CircuitBreaker** | **Same block** | **None** | ✅ |
 
 ---
 
