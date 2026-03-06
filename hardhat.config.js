@@ -1,5 +1,6 @@
 require("@nomicfoundation/hardhat-toolbox");
 
+// RiskSync local Hardhat settings
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
   solidity: {
