@@ -12,7 +12,7 @@ import StressPanel from "@/components/StressPanel";
 import CircuitBreaker from "@/components/CircuitBreaker";
 import ChainlinkPanel from "@/components/ChainlinkPanel";
 import { motion } from "framer-motion";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 function formatUsd(n: number) {
   if (!Number.isFinite(n) || n <= 0) return "$0";
@@ -30,7 +30,14 @@ function bpsToPercent(bps: number, decimals = 2) {
 
 export default function Dashboard() {
   const [activeAsset, setActiveAsset] = useState<string>("ETH");
-  const { data, simMode } = useOracleData(activeAsset);
+  const { data, simMode, assets } = useOracleData(activeAsset);
+
+  useEffect(() => {
+    if (assets.length === 0) return;
+    if (!assets.some((a) => a.symbol === activeAsset)) {
+      setActiveAsset(assets[0].symbol);
+    }
+  }, [assets, activeAsset]);
 
   if (!data) {
     return (
@@ -59,11 +66,25 @@ export default function Dashboard() {
       <Header
         data={data}
         simMode={simMode}
+        assets={assets}
         activeAsset={activeAsset}
         setActiveAsset={setActiveAsset}
       />
 
       <main className="p-4 lg:p-6 flex flex-col gap-5 max-w-[1600px] mx-auto">
+        {!data.assetEnabled && (
+          <motion.div
+            className="glass gradient-border p-4 text-sm text-amber-200 border border-amber-500/30"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25 }}
+          >
+            <div className="font-bold tracking-wide">ASSET DISABLED</div>
+            <div className="text-xs text-amber-100 mt-1">
+              {data.assetStatusNote || "This asset is configured as disabled in AssetRegistry. Live risk updates are intentionally off."}
+            </div>
+          </motion.div>
+        )}
 
         {/* ── ROW 1: Gauge + Alert + LTV ─────────────────────────────────── */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -159,7 +180,7 @@ export default function Dashboard() {
               { label: "COLLATERAL", value: formatUsd(cplcs.totalCollateralUsd), highlight: true },
               { label: "AT RISK", value: formatUsd(cplcs.estimatedLiquidationUsd) },
               { label: "AMPLIF.", value: `${(cplcs.amplificationBps / 100).toFixed(1)}%` },
-              { label: "PROTOCOLS", value: "4 live" },
+              { label: "STATUS", value: data.assetEnabled ? "enabled" : "disabled" },
             ]}
           />
           <PillarCard
@@ -223,7 +244,7 @@ export default function Dashboard() {
 
         {/* ── Footer ─────────────────────────────────────────────────────── */}
         <div className="text-center text-[10px] text-slate-700 py-4 border-t border-[#1a2744]">
-          DEFISTRESSORACLE · 4-PILLAR ON-CHAIN RISK MIDDLEWARE · 179 UNIT TESTS ·{" "}
+          DEFISTRESSORACLE · 4-PILLAR ON-CHAIN RISK MIDDLEWARE · MULTI-ASSET REGISTRY ROUTED ·{" "}
           <span className="text-indigo-700">MCO 30% + TDRV 35% + CPLCS 20% + TCO 15%</span>
           {" "}·{" "}
           <span className="text-[#375bd2]">Chainlink Price Feeds + Automation + CCIP</span>

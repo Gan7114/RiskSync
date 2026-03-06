@@ -83,6 +83,7 @@ export interface ChainlinkData {
   // Automation
   lastUpkeepTimestamp: number;
   nextUpkeepIn: number;    // seconds
+  upkeepIntervalSeconds: number;
   upkeepCount: number;
   // CCIP
   ccipBroadcasts: number;
@@ -109,17 +110,24 @@ export interface OracleSnapshot {
   timestamp: number;
   tick: number;
   asset: string;
+  assetAddress: string;
+  assetEnabled: boolean;
+  assetConfigured: boolean;
+  assetStatusNote: string;
 }
 
 export interface Asset {
   symbol: string;
   name: string;
+  address: string;
+  enabled: boolean;
+  configured: boolean;
 }
 
 export const SUPPORTED_ASSETS: Asset[] = [
-  { symbol: "ETH", name: "Ethereum" },
-  { symbol: "BTC", name: "Bitcoin" },
-  { symbol: "LINK", name: "Chainlink" },
-  { symbol: "UNI", name: "Uniswap" },
-  { symbol: "AAVE", name: "Aave" },
+  { symbol: "ETH", name: "Ethereum", address: "ETH", enabled: true, configured: true },
+  { symbol: "BTC", name: "Bitcoin", address: "BTC", enabled: true, configured: true },
+  { symbol: "LINK", name: "Chainlink", address: "LINK", enabled: true, configured: true },
+  { symbol: "UNI", name: "Uniswap", address: "UNI", enabled: true, configured: true },
+  { symbol: "AAVE", name: "Aave", address: "AAVE", enabled: true, configured: true },
 ];

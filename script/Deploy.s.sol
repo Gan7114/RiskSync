@@ -13,6 +13,8 @@ import {StressScenarioRegistry}          from "../src/StressScenarioRegistry.sol
 import {ChainlinkVolatilityOracle}       from "../src/ChainlinkVolatilityOracle.sol";
 import {AutomatedRiskUpdater}            from "../src/AutomatedRiskUpdater.sol";
 import {CrossChainRiskBroadcaster}       from "../src/CrossChainRiskBroadcaster.sol";
+import {AssetRegistry}                   from "../src/AssetRegistry.sol";
+import {MultiAssetRiskRouter}            from "../src/MultiAssetRiskRouter.sol";
 
 /// @title Deploy
 /// @notice Deploys the full DeFiStressOracle system to Ethereum mainnet.
@@ -50,8 +52,14 @@ contract Deploy is Script {
 
     address constant WETH_USDC_POOL  = 0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640;
     address constant ETH_USD_FEED    = 0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419;
+    address constant BTC_USD_FEED    = 0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c;
+    address constant LINK_USD_FEED   = 0x2c1d072e956AFFC0D435Cb7AC38EF18d24d9127c;
+    address constant AAVE_USD_FEED   = 0x547a514d5e3769680Ce22B2361c10Ea13619e8a9;
     address constant AAVE_DATA_PROV  = 0x7B4EB56E7CD4b454BA8ff71E4518426369a138a3;
     address constant WETH            = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address constant WBTC            = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
+    address constant LINK_TOKEN      = 0x514910771AF9Ca656af840dff83E8264EcF986CA;
+    address constant AAVE_TOKEN      = 0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9;
     address constant COMPOUND_COMET  = 0xc3d688B66703497DAA19211EEdff47f25384cdc3;
     address constant MORPHO_BLUE     = 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb;
     // Chainlink CCIP Router (Ethereum mainnet):
@@ -195,10 +203,75 @@ contract Deploy is Script {
         console2.log("URC deployed:         ", address(urc));
         console2.log("URC owner:            ", urc.owner());
 
+        // ── 5.5 AssetRegistry & MultiAssetRiskRouter ──────────────────────────
+        AssetRegistry registry = new AssetRegistry();
+        console2.log("AssetRegistry deployed:       ", address(registry));
+
+        // Multi-asset seeds. ETH is wired by default; BTC/LINK/AAVE pools are env-driven.
+        // If pool/feed infra is missing, the asset is stored as disabled instead of faking "live".
+        _registerOrDisable(
+            registry,
+            "ETH",
+            WETH,
+            WETH_USDC_POOL,
+            ETH_USD_FEED,
+            18,
+            uint256(_envUintOr("ETH_SHOCK_BPS", 2_000)),
+            COST_THRESHOLD_LOW,
+            COST_THRESHOLD_HIGH
+        );
+        _registerOrDisable(
+            registry,
+            "BTC",
+            WBTC,
+            _envAddressOr("BTC_UNI_POOL", address(0)),
+            _envAddressOr("BTC_USD_FEED", BTC_USD_FEED),
+            uint8(_envUintOr("BTC_TOKEN1_DECIMALS", 6)),
+            uint256(_envUintOr("BTC_SHOCK_BPS", 2_000)),
+            COST_THRESHOLD_LOW,
+            COST_THRESHOLD_HIGH
+        );
+        _registerOrDisable(
+            registry,
+            "LINK",
+            LINK_TOKEN,
+            _envAddressOr("LINK_UNI_POOL", address(0)),
+            _envAddressOr("LINK_USD_FEED", LINK_USD_FEED),
+            uint8(_envUintOr("LINK_TOKEN1_DECIMALS", 18)),
+            uint256(_envUintOr("LINK_SHOCK_BPS", 2_500)),
+            COST_THRESHOLD_LOW,
+            COST_THRESHOLD_HIGH
+        );
+        _registerOrDisable(
+            registry,
+            "AAVE",
+            AAVE_TOKEN,
+            _envAddressOr("AAVE_UNI_POOL", address(0)),
+            _envAddressOr("AAVE_USD_FEED", AAVE_USD_FEED),
+            uint8(_envUintOr("AAVE_TOKEN1_DECIMALS", 18)),
+            uint256(_envUintOr("AAVE_SHOCK_BPS", 2_500)),
+            COST_THRESHOLD_LOW,
+            COST_THRESHOLD_HIGH
+        );
+
+        MultiAssetRiskRouter router = new MultiAssetRiskRouter(
+            address(registry),
+            address(mco),
+            address(tdrv),
+            address(cplcs),
+            address(tco),
+            WEIGHT_MCO,
+            WEIGHT_TDRV,
+            WEIGHT_CPLCS,
+            WEIGHT_TCO
+        );
+        console2.log("MultiAssetRiskRouter deployed:", address(router));
+
         // ── 6. LendingProtocolCircuitBreaker ──────────────────────────────────
-        // Uses URC as the risk score provider. Default LTV ladder applied.
+        // Uses router as the risk score provider. Default LTV ladder applied.
         LendingProtocolCircuitBreaker cb = new LendingProtocolCircuitBreaker(
-            address(urc)
+            address(router),
+            WETH
         );
         console2.log("CircuitBreaker deployed:", address(cb));
 
@@ -222,10 +295,11 @@ contract Deploy is Script {
         console2.log("ChainlinkVolOracle deployed:", address(cvo));
 
         // ── 9. AutomatedRiskUpdater ───────────────────────────────────────────
-        // Chainlink Automation keeper: calls URC.updateRiskScore() and
+        // Chainlink Automation keeper: calls updateRiskForAssets() and
         // CircuitBreaker.checkAndRespond() every 5 minutes on-chain.
         AutomatedRiskUpdater aru = new AutomatedRiskUpdater(
-            address(urc),
+            address(router),
+            address(registry),
             address(cb),
             ARU_INTERVAL
         );
@@ -237,7 +311,8 @@ contract Deploy is Script {
         // to Base, Arbitrum, Optimism, and Polygon on threshold breach.
         CrossChainRiskBroadcaster ccrb = new CrossChainRiskBroadcaster(
             CCIP_ROUTER,
-            address(urc),
+            address(router),
+            WETH,
             address(cb)
         );
         console2.log("CrossChainBroadcaster deployed:", address(ccrb));
@@ -251,6 +326,8 @@ contract Deploy is Script {
         console2.log("CrossProtocolCascadeScore:     ", address(cplcs));
         console2.log("TickConcentrationOracle:       ", address(tco));
         console2.log("UnifiedRiskCompositor:         ", address(urc));
+        console2.log("AssetRegistry:                 ", address(registry));
+        console2.log("MultiAssetRiskRouter:          ", address(router));
         console2.log("LendingProtocolCircuitBreaker: ", address(cb));
         console2.log("StressScenarioRegistry:        ", address(ssr));
         console2.log("ChainlinkVolatilityOracle:     ", address(cvo));
@@ -267,5 +344,58 @@ contract Deploy is Script {
         console2.log("  Weight CPLCS:", WEIGHT_CPLCS);
         console2.log("  Weight TCO:  ", WEIGHT_TCO);
         console2.log("==========================================");
+    }
+
+    function _registerOrDisable(
+        AssetRegistry registry,
+        string memory label,
+        address asset,
+        address pool,
+        address feed,
+        uint8 token1Decimals,
+        uint256 shockBps,
+        uint256 mcoLow,
+        uint256 mcoHigh
+    ) internal {
+        bool enabled = _isLiveInfra(pool) && _isLiveInfra(feed);
+
+        registry.addAssetConfig(
+            AssetRegistry.AssetConfig({
+                asset: asset,
+                pool: pool,
+                feed: feed,
+                token1Decimals: token1Decimals,
+                shockBps: shockBps,
+                mcoThresholdLow: mcoLow,
+                mcoThresholdHigh: mcoHigh,
+                enabled: enabled
+            })
+        );
+
+        if (enabled) {
+            console2.log("Asset enabled:", label);
+        } else {
+            console2.log("Asset disabled (missing infra):", label);
+        }
+    }
+
+    function _isLiveInfra(address target) internal view returns (bool) {
+        return target != address(0) && target.code.length > 0;
+    }
+
+    function _envAddressOr(string memory key, address fallbackValue) internal view returns (address value) {
+        try vm.envAddress(key) returns (address fromEnv) {
+            return fromEnv;
+        } catch {
+            return fallbackValue;
+        }
+    }
+
+    function _envUintOr(string memory key, uint256 fallbackValue) internal view returns (uint256 value) {
+        try vm.envUint(key) returns (uint256 fromEnv) {
+            return fromEnv;
+        } catch {
+            return fallbackValue;
+        }
     }
 }

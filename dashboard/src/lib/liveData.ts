@@ -1,47 +1,52 @@
-/**
- * liveData.ts — reads real on-chain data from Sepolia contracts.
- * Returns a Partial<OracleSnapshot> merged on top of the mock baseline.
- * Every contract call is wrapped in try/catch; failed calls leave the
- * corresponding mock field in place (graceful degradation).
- */
-
 import { ethers } from "ethers";
-import { ADDRESSES, RPC_URL } from "./contracts";
+import { ADDRESSES, RPC_URL, isMultiAssetLive } from "./contracts";
 import {
-  URC_ABI,
-  MCO_ABI,
-  TDRV_ABI,
-  CPLCS_ABI,
-  TCO_ABI,
-  CIRCUIT_BREAKER_ABI,
+  ARU_ABI,
+  ASSET_REGISTRY_ABI,
+  CCRB_ABI,
   CVO_ABI,
+  CIRCUIT_BREAKER_ABI,
+  CPLCS_ABI,
+  MCO_ABI,
+  MULTI_ASSET_ROUTER_ABI,
+  TCO_ABI,
+  TDRV_ABI,
+  URC_ABI,
 } from "./abis";
 import type {
-  OracleSnapshot,
   AlertLevel,
+  Asset,
+  OracleSnapshot,
   RiskTier,
-  VolatilityRegime,
   ScoreMomentum,
+  VolatilityRegime,
 } from "./types";
 
-// ─── Mapping helpers ──────────────────────────────────────────────────────────
-
 const TIER_MAP: RiskTier[] = ["LOW", "MODERATE", "HIGH", "CRITICAL"];
-const REGIME_MAP: VolatilityRegime[] = [
-  "CALM",
-  "NORMAL",
-  "ELEVATED",
-  "STRESS",
-  "EXTREME",
-];
-const MOMENTUM_MAP: ScoreMomentum[] = [
-  "PLUNGING",
-  "FALLING",
-  "STABLE",
-  "RISING",
-  "SPIKING",
-];
+const REGIME_MAP: VolatilityRegime[] = ["CALM", "NORMAL", "ELEVATED", "STRESS", "EXTREME"];
+const MOMENTUM_MAP: ScoreMomentum[] = ["PLUNGING", "FALLING", "STABLE", "RISING", "SPIKING"];
 const USD_SCALE = BigInt(100_000_000);
+
+const ADDRESS_METADATA: Record<string, { symbol: string; name: string }> = {
+  "0xc02aa39b223fe8d0a0e5c4f27ead9083c756cc2": { symbol: "ETH", name: "Ethereum" },
+  "0x7b79995e5f793a07bc00c21412e50ecae098e7f9": { symbol: "ETH", name: "Ethereum" },
+  "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": { symbol: "BTC", name: "Bitcoin" },
+  "0x517f2982701695d4e52f1ecfbef3ba31df470161": { symbol: "BTC", name: "Bitcoin" },
+  "0x514910771af9ca656af840dff83e8264ecf986ca": { symbol: "LINK", name: "Chainlink" },
+  "0x779877a7b0d9e8603169ddbd7836e478b4624789": { symbol: "LINK", name: "Chainlink" },
+  "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9": { symbol: "AAVE", name: "Aave" },
+};
+
+const ERC20_META_ABI = [
+  "function symbol() view returns (string)",
+  "function name() view returns (string)",
+];
+
+const CHAINLINK_FEED_ABI = [
+  "function description() view returns (string)",
+  "function decimals() view returns (uint8)",
+  "function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)",
+];
 
 function bn(v: bigint): number {
   return Number(v);
@@ -57,7 +62,25 @@ function toDisplayRoundId(v: bigint): number {
   return Number(v & low64Mask);
 }
 
-// ─── Provider singleton ───────────────────────────────────────────────────────
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function scoreToAlertLevel(score: number): AlertLevel {
+  if (score >= 80) return 4;
+  if (score >= 65) return 3;
+  if (score >= 50) return 2;
+  if (score >= 25) return 1;
+  return 0;
+}
+
+function regimeFromVol(volBps: number): VolatilityRegime {
+  if (volBps > 12000) return "EXTREME";
+  if (volBps > 8000) return "STRESS";
+  if (volBps > 5000) return "ELEVATED";
+  if (volBps > 2000) return "NORMAL";
+  return "CALM";
+}
 
 let _provider: ethers.JsonRpcProvider | null = null;
 function getProvider(): ethers.JsonRpcProvider {
@@ -67,70 +90,345 @@ function getProvider(): ethers.JsonRpcProvider {
   return _provider;
 }
 
-// ─── Main fetch ───────────────────────────────────────────────────────────────
+type RegistryConfig = {
+  pool: string;
+  feed: string;
+  token1Decimals: number;
+  shockBps: number;
+  mcoThresholdLow: number;
+  mcoThresholdHigh: number;
+  enabled: boolean;
+};
 
-export async function fetchLiveSnapshot(asset: string = "ETH"): Promise<Partial<OracleSnapshot>> {
-  // Graceful degradation: If not ETH, fallback to the improved mock data
-  // to show realistic multi-asset metrics (Sepolia only has ETH pool deployed for MCO/TDRV).
-  if (asset !== "ETH") {
-    return {};
+function decodeRegistryConfig(cfg: any): RegistryConfig {
+  const pool = String(cfg.pool ?? cfg[1] ?? ethers.ZeroAddress);
+  const feed = String(cfg.feed ?? cfg[2] ?? ethers.ZeroAddress);
+  const token1Decimals = Number(cfg.token1Decimals ?? cfg[3] ?? 18);
+  const shockBps = Number(cfg.shockBps ?? cfg[4] ?? 2000);
+  const mcoThresholdLow = Number(cfg.mcoThresholdLow ?? cfg[5] ?? 0);
+  const mcoThresholdHigh = Number(cfg.mcoThresholdHigh ?? cfg[6] ?? 0);
+  const enabled = Boolean(cfg.enabled ?? cfg[7]);
+  return {
+    pool,
+    feed,
+    token1Decimals,
+    shockBps,
+    mcoThresholdLow,
+    mcoThresholdHigh,
+    enabled,
+  };
+}
+
+async function resolveAssetMeta(provider: ethers.JsonRpcProvider, assetAddress: string): Promise<{ symbol: string; name: string }> {
+  const lower = assetAddress.toLowerCase();
+  if (ADDRESS_METADATA[lower]) return ADDRESS_METADATA[lower];
+
+  try {
+    const token = new ethers.Contract(assetAddress, ERC20_META_ABI, provider) as any;
+    const [symbolRaw, nameRaw] = await Promise.all([token.symbol(), token.name()]);
+    const symbol = String(symbolRaw ?? "").trim();
+    const name = String(nameRaw ?? "").trim();
+    if (symbol.length > 0) {
+      return {
+        symbol: symbol.toUpperCase(),
+        name: name.length > 0 ? name : symbol.toUpperCase(),
+      };
+    }
+  } catch {
+    // noop
   }
 
-  const provider = getProvider();
-  const result: Partial<OracleSnapshot> = {};
+  const short = `${assetAddress.slice(0, 6)}...${assetAddress.slice(-4)}`;
+  return { symbol: short, name: short };
+}
 
-  // ── URC ──────────────────────────────────────────────────────────────────
-  if (ADDRESSES.URC) {
-    const urc = new ethers.Contract(ADDRESSES.URC, URC_ABI, provider);
+export async function fetchConfiguredAssets(): Promise<Asset[]> {
+  if (!isMultiAssetLive() || !ADDRESSES.ASSET_REGISTRY) return [];
+
+  const provider = getProvider();
+  const registry = new ethers.Contract(ADDRESSES.ASSET_REGISTRY, ASSET_REGISTRY_ABI, provider) as any;
+
+  let addresses: string[] = [];
+  try {
+    const raw = await registry.getSupportedAssets();
+    addresses = (raw as string[]).map((a) => String(a));
+  } catch {
+    return [];
+  }
+
+  const assets = await Promise.all(
+    addresses.map(async (address) => {
+      try {
+        const cfg = decodeRegistryConfig(await registry.getConfig(address));
+        const meta = await resolveAssetMeta(provider, address);
+        return {
+          symbol: meta.symbol,
+          name: meta.name,
+          address,
+          enabled: cfg.enabled,
+          configured: true,
+        } as Asset;
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  const filtered = assets.filter((a): a is Asset => a !== null);
+  filtered.sort((a, b) => {
+    if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+    return a.symbol.localeCompare(b.symbol);
+  });
+
+  // De-duplicate symbols for dropdown stability.
+  const seen = new Map<string, number>();
+  for (const asset of filtered) {
+    const n = seen.get(asset.symbol) ?? 0;
+    if (n > 0) {
+      asset.symbol = `${asset.symbol}-${asset.address.slice(2, 6)}`;
+    }
+    seen.set(asset.symbol, n + 1);
+  }
+
+  return filtered;
+}
+
+export async function fetchLiveSnapshot(
+  assetSymbol: string = "ETH",
+  assetAddress: string = "",
+  assetEnabled: boolean = true
+): Promise<Partial<OracleSnapshot>> {
+  if (!assetEnabled) {
+    return {
+      asset: assetSymbol,
+      assetAddress,
+      assetEnabled: false,
+      assetConfigured: true,
+      assetStatusNote: "DISABLED",
+      timestamp: Date.now(),
+    };
+  }
+
+  const multiAssetReady = isMultiAssetLive() && Boolean(assetAddress);
+  if (multiAssetReady) {
+    return fetchMultiAssetSnapshot(assetSymbol, assetAddress);
+  }
+
+  return fetchLegacySnapshot(assetSymbol);
+}
+
+async function fetchMultiAssetSnapshot(assetSymbol: string, assetAddress: string): Promise<Partial<OracleSnapshot>> {
+  const provider = getProvider();
+  const result: Partial<OracleSnapshot> = {
+    asset: assetSymbol,
+    assetAddress,
+    assetEnabled: true,
+    assetConfigured: true,
+    assetStatusNote: "LIVE",
+  };
+
+  const router = new ethers.Contract(ADDRESSES.MULTI_ASSET_ROUTER, MULTI_ASSET_ROUTER_ABI, provider) as any;
+  const registry = new ethers.Contract(ADDRESSES.ASSET_REGISTRY, ASSET_REGISTRY_ABI, provider) as any;
+
+  let config: RegistryConfig | null = null;
+  try {
+    config = decodeRegistryConfig(await registry.getConfig(assetAddress));
+    if (!config.enabled) {
+      result.assetEnabled = false;
+      result.assetStatusNote = "DISABLED";
+      result.timestamp = Date.now();
+      return result;
+    }
+  } catch {
+    result.assetConfigured = false;
+    result.assetStatusNote = "NOT_CONFIGURED";
+  }
+
+  try {
+    const state = await router.assetRiskState(assetAddress);
+    const score = bn(state[0] as bigint);
+    const mcoInput = bn(state[1] as bigint);
+    const tdrvInput = bn(state[2] as bigint);
+    const cpInput = bn(state[3] as bigint);
+    const tcoInput = bn(state[4] as bigint);
+    const tier = bn(state[5] as bigint);
+    const ltvBps = bn(state[6] as bigint);
+    const realizedVolBps = bn(state[7] as bigint);
+    const manipUsd = usd1e8(state[8] as bigint);
+    const ewma = bn(state[9] as bigint);
+
+    result.compositeScore = clamp(score, 0, 100);
+    result.alertLevel = scoreToAlertLevel(score);
+    result.riskTier = TIER_MAP[Math.min(tier, 3)] ?? "LOW";
+    result.ltvBps = ltvBps;
+    result.ewmaScore = ewma;
+    result.momentum = "STABLE";
+
+    result.mco = {
+      score: clamp(mcoInput, 0, 100),
+      costUsd: Math.max(0, manipUsd),
+      borrowRateBps: 500,
+    };
+    result.tdrv = {
+      score: clamp(tdrvInput, 0, 100),
+      volBps: realizedVolBps,
+      regime: regimeFromVol(realizedVolBps),
+      ewmaVol: realizedVolBps,
+    };
+    result.cplcs = {
+      score: clamp(cpInput, 0, 100),
+      totalCollateralUsd: 0,
+      amplificationBps: 10_000,
+      estimatedLiquidationUsd: 0,
+    };
+    result.tco = {
+      score: clamp(tcoInput, 0, 100),
+      hhiBps: 0,
+      entropyBits: 0,
+      biasBps: 0,
+    };
+    result.scoreHistory = [score];
+  } catch {
+    // keep mock baseline values from caller
+  }
+
+  if (ADDRESSES.MCO && config) {
+    const mco = new ethers.Contract(ADDRESSES.MCO, MCO_ABI, provider) as any;
+    try {
+      const [rawCostUsd, securityScore] = await mco.getManipulationCostForPool(
+        config.pool,
+        config.feed,
+        BigInt(200),
+        config.token1Decimals
+      );
+      const rawUsd = usd1e8(rawCostUsd as bigint);
+      const highCapUsd = Math.floor(config.mcoThresholdHigh / 1e8);
+      const normalizedUsd = highCapUsd > 0 ? Math.min(rawUsd, highCapUsd) : rawUsd;
+      result.mco = {
+        score: clamp(100 - bn(securityScore as bigint), 0, 100),
+        costUsd: normalizedUsd,
+        borrowRateBps: result.mco?.borrowRateBps ?? 500,
+      };
+    } catch {
+      // noop
+    }
 
     try {
+      const rate = await mco.getEffectiveBorrowRateBps();
+      if (result.mco) result.mco.borrowRateBps = bn(rate as bigint);
+    } catch {
+      // noop
+    }
+  }
+
+  if (ADDRESSES.TDRV && config) {
+    const tdrv = new ethers.Contract(ADDRESSES.TDRV, TDRV_ABI, provider) as any;
+    try {
+      const [volBps, volScore] = await Promise.all([
+        tdrv.getRealizedVolatilityForPool(config.pool, BigInt(3600), BigInt(24)),
+        tdrv.getVolatilityScoreForPool(config.pool, BigInt(3600), BigInt(24), BigInt(2000), BigInt(15000)),
+      ]);
+      result.tdrv = {
+        score: clamp(bn(volScore as bigint), 0, 100),
+        volBps: bn(volBps as bigint),
+        regime: regimeFromVol(bn(volBps as bigint)),
+        ewmaVol: bn(volBps as bigint),
+      };
+    } catch {
+      // noop
+    }
+  }
+
+  if (ADDRESSES.CPLCS && config) {
+    const cplcs = new ethers.Contract(ADDRESSES.CPLCS, CPLCS_ABI, provider) as any;
+    try {
+      const r = await cplcs.getCascadeScore(assetAddress, BigInt(config.shockBps));
+      result.cplcs = {
+        score: clamp(bn(r[5] as bigint), 0, 100),
+        totalCollateralUsd: usd1e8(r[0] as bigint),
+        amplificationBps: bn(r[4] as bigint),
+        estimatedLiquidationUsd: usd1e8(r[1] as bigint),
+      };
+    } catch {
+      // noop
+    }
+  }
+
+  if (ADDRESSES.TCO && config) {
+    const tco = new ethers.Contract(ADDRESSES.TCO, TCO_ABI, provider) as any;
+    try {
+      const bd = await tco.getConcentrationBreakdownForPool(config.pool, BigInt(86_400), BigInt(24));
+      result.tco = {
+        score: clamp(bn(bd[4] as bigint), 0, 100),
+        hhiBps: bn(bd[0] as bigint),
+        entropyBits: bn(bd[3] as bigint),
+        biasBps: bn(bd[2] as bigint),
+      };
+    } catch {
+      // noop
+    }
+  }
+
+  await applyCircuitBreakerData(result, provider);
+  await applyChainlinkPanelData(result, provider, config?.feed ?? "");
+
+  result.timestamp = Date.now();
+  return result;
+}
+
+async function fetchLegacySnapshot(assetSymbol: string): Promise<Partial<OracleSnapshot>> {
+  const provider = getProvider();
+  const result: Partial<OracleSnapshot> = {
+    asset: assetSymbol,
+    assetAddress: assetSymbol,
+    assetEnabled: assetSymbol === "ETH",
+    assetConfigured: assetSymbol === "ETH",
+    assetStatusNote: assetSymbol === "ETH" ? "LIVE_LEGACY" : "DISABLED",
+  };
+
+  if (assetSymbol !== "ETH") {
+    result.timestamp = Date.now();
+    return result;
+  }
+
+  if (ADDRESSES.URC) {
+    const urc = new ethers.Contract(ADDRESSES.URC, URC_ABI, provider) as any;
+    try {
       const rb = await urc.getRiskBreakdown();
-      // getRiskBreakdown returns:
-      // (compositeScore, mcoInput, tdrvInput, cpInput, tier, recommendedLtv,
-      //  realizedVolBps, manipulationCostUsd, updatedAt)
-      const composite = bn(rb[0]);
-      const tier = bn(rb[4]);
-      const ltvBps = bn(rb[5]);
+      const composite = bn(rb[0] as bigint);
+      const tier = bn(rb[4] as bigint);
+      const ltvBps = bn(rb[5] as bigint);
 
       result.compositeScore = composite;
       result.ltvBps = ltvBps > 0 ? ltvBps : 8000;
       result.riskTier = TIER_MAP[Math.min(tier, 3)] ?? "LOW";
-      result.alertLevel = (
-        composite >= 80 ? 4 : composite >= 65 ? 3 : composite >= 50 ? 2 : composite >= 25 ? 1 : 0
-      ) as AlertLevel;
+      result.alertLevel = scoreToAlertLevel(composite);
 
-      // Pillar sub-scores from composite breakdown
-      const mcoInput = bn(rb[1]);
-      const tdrvInput = bn(rb[2]);
-      const cpInput = bn(rb[3]);
-      const volBps = bn(rb[6]);
+      const mcoInput = bn(rb[1] as bigint);
+      const tdrvInput = bn(rb[2] as bigint);
+      const cpInput = bn(rb[3] as bigint);
+      const volBps = bn(rb[6] as bigint);
       const costUsd = usd1e8(rb[7] as bigint);
 
-      if (mcoInput > 0 || costUsd > 0) {
-        result.mco = {
-          score: Math.min(100, mcoInput),
-          costUsd: costUsd,
-          borrowRateBps: 500,
-        };
-      }
-      if (tdrvInput > 0 || volBps > 0) {
-        result.tdrv = {
-          score: Math.min(100, tdrvInput),
-          volBps: volBps,
-          regime: volBps > 8000 ? "STRESS" : volBps > 4000 ? "ELEVATED" : volBps > 2000 ? "NORMAL" : "CALM",
-          ewmaVol: volBps,
-        };
-      }
-      if (cpInput > 0) {
-        result.cplcs = {
-          score: Math.min(100, cpInput),
-          totalCollateralUsd: 0,
-          amplificationBps: 10000,
-          estimatedLiquidationUsd: 0,
-        };
-      }
+      result.mco = {
+        score: clamp(mcoInput, 0, 100),
+        costUsd,
+        borrowRateBps: 500,
+      };
+      result.tdrv = {
+        score: clamp(tdrvInput, 0, 100),
+        volBps,
+        regime: regimeFromVol(volBps),
+        ewmaVol: volBps,
+      };
+      result.cplcs = {
+        score: clamp(cpInput, 0, 100),
+        totalCollateralUsd: 0,
+        amplificationBps: 10_000,
+        estimatedLiquidationUsd: 0,
+      };
     } catch {
-      // leave mock values
+      // noop
     }
 
     try {
@@ -138,228 +436,205 @@ export async function fetchLiveSnapshot(asset: string = "ETH"): Promise<Partial<
       const scores = Array.from(history as bigint[]).map(bn);
       if (scores.length > 0) result.scoreHistory = scores;
     } catch {
-      // leave mock
+      // noop
     }
 
     try {
       const ewma = await urc.getEWMAScore();
       result.ewmaScore = bn(ewma as bigint);
     } catch {
-      // leave mock
+      // noop
     }
 
     try {
       const [mom] = await urc.getScoreMomentum();
       result.momentum = MOMENTUM_MAP[Math.min(bn(mom as bigint), 4)] ?? "STABLE";
     } catch {
-      // leave mock
+      // noop
     }
   }
 
-  // ── MCO ──────────────────────────────────────────────────────────────────
-  if (ADDRESSES.MCO) {
-    const mco = new ethers.Contract(ADDRESSES.MCO, MCO_ABI, provider);
-    const mcoAny = mco as any;
-    let highThresholdUsd: number | undefined;
+  await applyCircuitBreakerData(result, provider);
+  await applyChainlinkPanelData(result, provider);
+  result.timestamp = Date.now();
+  return result;
+}
 
-    try {
-      const thresholdHigh = await mco.costThresholdHigh();
-      highThresholdUsd = usd1e8(thresholdHigh as bigint);
-    } catch {
-      // optional on older deployments
-    }
+async function applyCircuitBreakerData(result: Partial<OracleSnapshot>, provider: ethers.JsonRpcProvider): Promise<void> {
+  if (!ADDRESSES.CIRCUIT_BREAKER) return;
 
-    const hasSaneThreshold = highThresholdUsd === undefined || highThresholdUsd >= 1_000_000;
-
-    try {
-      // 2% deviation query (200 bps). Prefer normalized endpoint when available.
-      let costUsdScaled: number;
-      let secScore: bigint;
-
-      try {
-        if (!hasSaneThreshold) throw new Error("threshold-too-low");
-        const [normalizedCostUsd, normalizedScore] = await mcoAny.getManipulationCostNormalized(BigInt(200));
-        costUsdScaled = usd1e8(normalizedCostUsd as bigint);
-        secScore = normalizedScore as bigint;
-      } catch {
-        const [costUsdRaw, securityScoreRaw] = await mco.getManipulationCost(BigInt(200));
-        const rawUsd = usd1e8(costUsdRaw as bigint);
-        const fallbackCapUsd = hasSaneThreshold ? highThresholdUsd : 100_000_000; // $100M default UI cap
-        costUsdScaled = fallbackCapUsd ? Math.min(rawUsd, fallbackCapUsd) : rawUsd;
-        secScore = securityScoreRaw as bigint;
-      }
-
-      result.mco = {
-        score: Math.min(100, bn(secScore)),
-        costUsd: costUsdScaled,
-        borrowRateBps: result.mco?.borrowRateBps ?? 500,
-      };
-    } catch {
-      // leave mock
-    }
-
-    try {
-      const rate = await mco.getEffectiveBorrowRateBps();
-      if (result.mco) result.mco.borrowRateBps = bn(rate as bigint);
-    } catch {
-      // leave mock
-    }
+  try {
+    const cb = new ethers.Contract(ADDRESSES.CIRCUIT_BREAKER, CIRCUIT_BREAKER_ABI, provider) as any;
+    const [inCooldown, timeLeft, level] = await Promise.all([
+      cb.isInCooldown(),
+      cb.getTimeUntilCooldownExpiry(),
+      cb.currentLevel(),
+    ]);
+    result.circuitBreaker = {
+      isInCooldown: Boolean(inCooldown),
+      cooldownSecondsLeft: bn(timeLeft as bigint),
+      alertLevel: Math.min(4, bn(level as bigint)) as AlertLevel,
+    };
+  } catch {
+    // noop
   }
+}
 
-  // ── TDRV ─────────────────────────────────────────────────────────────────
-  if (ADDRESSES.TDRV) {
-    const tdrv = new ethers.Contract(ADDRESSES.TDRV, TDRV_ABI, provider);
+async function applyChainlinkPanelData(
+  result: Partial<OracleSnapshot>,
+  provider: ethers.JsonRpcProvider,
+  preferredFeedAddress: string = ""
+): Promise<void> {
+  const nowTs = Math.floor(Date.now() / 1000);
 
+  let feedDescription = result.asset ? `${result.asset} / USD` : "ASSET / USD";
+  let feedPrice = 0;
+  let feedRoundId = 0;
+  let feedUpdatedAt = 0;
+
+  let cvoVolBps = 0;
+  let numRoundsUsed = 0;
+  let oldestRoundAgeHours = 0;
+
+  let upkeepCount = 0;
+  let lastUpkeepTimestamp = nowTs;
+  let nextUpkeepIn = 300;
+  let upkeepIntervalSeconds = 300;
+
+  let ccipBroadcasts = 0;
+  let destinationCount = 3;
+  let broadcastThreshold = 2;
+
+  const tryReadFeed = async (feedAddress: string): Promise<boolean> => {
+    if (!feedAddress || feedAddress === ethers.ZeroAddress) return false;
     try {
-      const volBps = await tdrv.getRealizedVolatility();
-      const regime = await tdrv.getVolatilityRegime();
-      const regimeNum = bn(regime as bigint);
-      result.tdrv = {
-        score: result.tdrv?.score ?? 0,
-        volBps: bn(volBps as bigint),
-        regime: REGIME_MAP[Math.min(regimeNum, 4)] ?? "NORMAL",
-        ewmaVol: bn(volBps as bigint),
-      };
-    } catch {
-      // leave mock
-    }
-  }
-
-  // ── CPLCS ────────────────────────────────────────────────────────────────
-  if (ADDRESSES.CPLCS) {
-    const cplcs = new ethers.Contract(ADDRESSES.CPLCS, CPLCS_ABI, provider);
-
-    try {
-      // 20% price shock (2000 bps), Sepolia WETH
-      const res = await cplcs.getCascadeScore(ADDRESSES.WETH, BigInt(2000));
-      // (totalCollateralUsd, estimatedLiquidationUsd, secondaryImpactBps, totalImpactBps, amplificationBps, cascadeScore)
-      // totalCollateralUsd and estimatedLiquidationUsd are in 8-decimal USD.
-      result.cplcs = {
-        score: Math.min(100, bn(res[5] as bigint)),
-        totalCollateralUsd: Number((res[0] as bigint) / BigInt(100_000_000)),
-        amplificationBps: bn(res[4] as bigint) || 10000,
-        estimatedLiquidationUsd: Number((res[1] as bigint) / BigInt(100_000_000)),
-      };
-    } catch {
-      // leave mock
-    }
-  }
-
-  // ── TCO ──────────────────────────────────────────────────────────────────
-  if (ADDRESSES.TCO) {
-    const tco = new ethers.Contract(ADDRESSES.TCO, TCO_ABI, provider);
-
-    try {
-      const bd = await tco.getConcentrationBreakdown();
-      // (hhiBps, uniqueBuckets, directionalBiasBps, approximateEntropyBits, concentrationScore)
-      result.tco = {
-        score: Math.min(100, bn(bd[4] as bigint)),
-        hhiBps: bn(bd[0] as bigint),
-        entropyBits: bn(bd[3] as bigint),
-        biasBps: bn(bd[2] as bigint),
-      };
-    } catch {
-      // leave mock
-    }
-  }
-
-  // ── Circuit Breaker ───────────────────────────────────────────────────────
-  if (ADDRESSES.CIRCUIT_BREAKER) {
-    const cb = new ethers.Contract(ADDRESSES.CIRCUIT_BREAKER, CIRCUIT_BREAKER_ABI, provider);
-
-    try {
-      const [inCooldown, timeLeft, level] = await Promise.all([
-        cb.isInCooldown(),
-        cb.getTimeUntilCooldownExpiry(),
-        cb.currentLevel(),
+      const feed = new ethers.Contract(feedAddress, CHAINLINK_FEED_ABI, provider) as any;
+      const [desc, dec, latest] = await Promise.all([
+        feed.description(),
+        feed.decimals(),
+        feed.latestRoundData(),
       ]);
-      result.circuitBreaker = {
-        isInCooldown: Boolean(inCooldown),
-        cooldownSecondsLeft: bn(timeLeft as bigint),
-        alertLevel: Math.min(4, bn(level as bigint)) as AlertLevel,
-      };
+      const answer = latest[1] as bigint;
+      if (answer <= BigInt(0)) return false;
+
+      const decimals = Number(dec as bigint | number);
+      if (!Number.isFinite(decimals) || decimals < 0 || decimals > 18) return false;
+
+      feedDescription = String(desc);
+      feedPrice = Number(answer) / Math.pow(10, decimals);
+      feedRoundId = toDisplayRoundId(latest[0] as bigint);
+      feedUpdatedAt = Number(latest[3] as bigint);
+      return true;
     } catch {
-      // leave mock
+      return false;
+    }
+  };
+
+  let cvoFeedAddress = "";
+  if (ADDRESSES.CVO) {
+    try {
+      const cvo = new ethers.Contract(ADDRESSES.CVO, CVO_ABI, provider) as any;
+      cvoFeedAddress = String(await cvo.priceFeed());
+    } catch {
+      // noop
     }
   }
 
-  // ── Chainlink Volatility Oracle ───────────────────────────────────────────
+  const preferredLoaded = await tryReadFeed(preferredFeedAddress);
+  if (!preferredLoaded) {
+    await tryReadFeed(cvoFeedAddress);
+  }
+
   if (ADDRESSES.CVO) {
-    const cvo = new ethers.Contract(ADDRESSES.CVO, CVO_ABI, provider);
-    const cvoAny = cvo as any;
-
+    const cvo = new ethers.Contract(ADDRESSES.CVO, CVO_ABI, provider) as any;
     try {
-      const [desc, , latestPrice, latestRoundId] = await cvo.getPriceFeedDetails();
-      let price = Number(latestPrice as bigint) / 1e8;  // 8-decimal Chainlink price
-      let feedRoundId = toDisplayRoundId(latestRoundId as bigint);
-
-      // Prefer direct feed read when the deployed CVO ABI is inconsistent across versions.
+      let oldestRoundAgeSecs = 0;
       try {
-        const feedAddr = await cvo.priceFeed();
-        const feed = new ethers.Contract(
-          feedAddr,
-          [
-            "function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)",
-          ],
-          provider
-        );
-        const latest = await feed.latestRoundData();
-        if ((latest[1] as bigint) > BigInt(0)) {
-          price = Number(latest[1] as bigint) / 1e8;
-        }
-        feedRoundId = toDisplayRoundId(latest[0] as bigint);
-      } catch {
-        // keep CVO-provided round/price
-      }
-
-      let cvoVolBps: bigint = BigInt(0);
-      let numRoundsUsed: bigint = BigInt(0);
-      let oldestRoundAge: bigint = BigInt(0);
-
-      try {
-        const latest = await cvoAny["getVolatilityWithConfidence()"]();
-        cvoVolBps = latest[0] as bigint;
-        numRoundsUsed = latest[1] as bigint;
-        oldestRoundAge = latest[2] as bigint;
+        const latest = await cvo.getVolatilityWithConfidence();
+        cvoVolBps = bn(latest[0] as bigint);
+        numRoundsUsed = bn(latest[1] as bigint);
+        oldestRoundAgeSecs = bn(latest[2] as bigint);
       } catch {
         try {
-          const legacy = await cvoAny["getVolatilityWithConfidence(uint8,uint32)"](BigInt(12), BigInt(90_000));
-          cvoVolBps = legacy[0] as bigint;
-          numRoundsUsed = legacy[1] as bigint;
-          oldestRoundAge = legacy[2] as bigint;
+          const legacy = await cvo["getVolatilityWithConfidence(uint8,uint32)"](BigInt(12), BigInt(90_000));
+          cvoVolBps = bn(legacy[0] as bigint);
+          numRoundsUsed = bn(legacy[1] as bigint);
+          oldestRoundAgeSecs = bn(legacy[2] as bigint);
         } catch {
-          const fallbackVol = await cvo.getVolatility();
-          cvoVolBps = fallbackVol as bigint;
+          cvoVolBps = bn(await cvo.getVolatility());
         }
       }
 
-      const vol = bn(cvoVolBps);
-      const regime: VolatilityRegime =
-        vol > 8000 ? "STRESS" : vol > 4000 ? "ELEVATED" : vol > 2000 ? "NORMAL" : "CALM";
-
-      result.chainlink = {
-        feedDescription: String(desc),
-        feedPrice: price > 0 ? Math.round(price) : 0,
-        feedRoundId: feedRoundId,
-        cvoVolBps: vol,
-        cvoRegime: regime,
-        numRoundsUsed: bn(numRoundsUsed),
-        oldestRoundAgeHours: Math.round(bn(oldestRoundAge) / 3600),
-        // Automation / CCIP stats — keep mock values (updated by keepers)
-        lastUpkeepTimestamp: Date.now() / 1000,
-        nextUpkeepIn: 300,
-        upkeepCount: 0,
-        ccipBroadcasts: 0,
-        destinationCount: 3,
-        broadcastThreshold: 2,
-      };
+      if (oldestRoundAgeSecs > 0) {
+        oldestRoundAgeHours = Math.round(oldestRoundAgeSecs / 3600);
+      }
     } catch {
-      // leave mock
+      // noop
     }
   }
 
-  // Timestamp
-  result.timestamp = Date.now();
+  if (oldestRoundAgeHours === 0 && feedUpdatedAt > 0) {
+    oldestRoundAgeHours = Math.max(0, Math.round((nowTs - feedUpdatedAt) / 3600));
+  }
 
-  return result;
+  if (ADDRESSES.ARU) {
+    try {
+      const aru = new ethers.Contract(ADDRESSES.ARU, ARU_ABI, provider) as any;
+      const [count, lastTs, nextSecs, intervalSecs] = await Promise.all([
+        aru.upkeepCount(),
+        aru.lastUpkeepTimestamp(),
+        aru.secondsUntilNextUpkeep(),
+        aru.updateIntervalSeconds(),
+      ]);
+
+      upkeepCount = bn(count as bigint);
+      lastUpkeepTimestamp = bn(lastTs as bigint) || lastUpkeepTimestamp;
+      nextUpkeepIn = Math.max(0, bn(nextSecs as bigint));
+      upkeepIntervalSeconds = Math.max(60, bn(intervalSecs as bigint));
+    } catch {
+      // noop
+    }
+  }
+
+  if (nextUpkeepIn === 0 && lastUpkeepTimestamp > 0) {
+    const elapsed = Math.max(0, nowTs - lastUpkeepTimestamp);
+    const rem = upkeepIntervalSeconds - (elapsed % upkeepIntervalSeconds);
+    nextUpkeepIn = rem === upkeepIntervalSeconds ? 0 : rem;
+  }
+
+  if (ADDRESSES.CCRB) {
+    try {
+      const ccrb = new ethers.Contract(ADDRESSES.CCRB, CCRB_ABI, provider) as any;
+      const [count, dests, threshold] = await Promise.all([
+        ccrb.broadcastCount(),
+        ccrb.destinationCount(),
+        ccrb.broadcastThreshold(),
+      ]);
+      ccipBroadcasts = bn(count as bigint);
+      destinationCount = bn(dests as bigint);
+      broadcastThreshold = Math.min(4, bn(threshold as bigint));
+    } catch {
+      // noop
+    }
+  }
+
+  const regime: VolatilityRegime =
+    cvoVolBps > 8000 ? "STRESS" : cvoVolBps > 4000 ? "ELEVATED" : cvoVolBps > 2000 ? "NORMAL" : "CALM";
+
+  result.chainlink = {
+    feedDescription,
+    feedPrice: feedPrice > 0 ? Math.round(feedPrice) : 0,
+    feedRoundId,
+    cvoVolBps,
+    cvoRegime: regime,
+    numRoundsUsed,
+    oldestRoundAgeHours,
+    lastUpkeepTimestamp,
+    nextUpkeepIn,
+    upkeepIntervalSeconds,
+    upkeepCount,
+    ccipBroadcasts,
+    destinationCount,
+    broadcastThreshold,
+  };
 }

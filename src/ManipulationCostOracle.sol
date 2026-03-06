@@ -331,23 +331,47 @@ contract ManipulationCostOracle {
         (normalizedCostUsd, capped) = _normalizeCostUsd(rawCostUsd);
     }
 
-    /// @notice Returns the capital cost (in USD) required to manipulate the TWAP
-    ///         for ANY arbitrary pool/feed, enabling a single MCO deployment to
-    ///         serve unlimited assets.
-    ///
-    /// @param _pool              Address of the Uniswap V3 pool to analyze.
-    /// @param _token1UsdFeed     Address of the Chainlink feed for the pool's token1.
-    /// @param targetDeviationBps How far attacker must push TWAP.
+    /// @notice Backward-compatible 3-arg path (uses constructor token1Decimals).
     function getManipulationCostForPool(address _pool, address _token1UsdFeed, uint256 targetDeviationBps)
         public
         view
         returns (uint256 costUsd, uint256 securityScore)
     {
+        return _getManipulationCostForPool(_pool, _token1UsdFeed, targetDeviationBps, token1Decimals);
+    }
+
+    /// @notice Decimals-aware 4-arg path for multi-asset callers.
+    function getManipulationCostForPool(
+        address _pool,
+        address _token1UsdFeed,
+        uint256 targetDeviationBps,
+        uint8 decimals
+    ) public view returns (uint256 costUsd, uint256 securityScore) {
+        return _getManipulationCostForPool(_pool, _token1UsdFeed, targetDeviationBps, decimals);
+    }
+
+    /// @notice Alias kept for compatibility with earlier integrations.
+    function getManipulationCostForPoolWithDecimals(
+        address _pool,
+        address _token1UsdFeed,
+        uint256 targetDeviationBps,
+        uint8 decimals
+    ) public view returns (uint256 costUsd, uint256 securityScore) {
+        return _getManipulationCostForPool(_pool, _token1UsdFeed, targetDeviationBps, decimals);
+    }
+
+    function _getManipulationCostForPool(
+        address _pool,
+        address _token1UsdFeed,
+        uint256 targetDeviationBps,
+        uint8 decimals
+    ) internal view returns (uint256 costUsd, uint256 securityScore) {
         if (targetDeviationBps == 0 || targetDeviationBps > 5_000) revert DeviationOutOfRange();
         if (_pool == address(0) || _token1UsdFeed == address(0)) revert InvalidPool();
 
         IUniswapV3PoolMCO targetPool = IUniswapV3PoolMCO(_pool);
         AggregatorV3Interface targetFeed = AggregatorV3Interface(_token1UsdFeed);
+        uint8 effectiveDecimals = decimals == 0 ? token1Decimals : decimals;
 
         // ── Check pool is not locked ────────────────────────────────────────
         // We only read slot0 to check the unlocked flag — never for price.
@@ -387,8 +411,8 @@ contract ManipulationCostOracle {
 
         // Convert token1 → USD via Chainlink.
         uint256 token1UsdPrice = _readToken1UsdPrice(targetFeed);
-        // Normalize: (token1Amount * price_with_8_dec) / 10^token1Decimals = cost_in_8_decimal_usd
-        costUsd = Math.mulDiv(totalCostToken1, token1UsdPrice, 10 ** uint256(token1Decimals));
+        // Normalize: (token1Amount * price_with_8_dec) / 10^decimals = cost_in_8_decimal_usd
+        costUsd = Math.mulDiv(totalCostToken1, token1UsdPrice, 10 ** uint256(effectiveDecimals));
 
         securityScore = _scoreFromCost(costUsd);
     }

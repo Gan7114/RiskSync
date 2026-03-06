@@ -1,14 +1,15 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { generateSnapshot } from "@/lib/mockData";
+import { generateDisabledSnapshot, generateSnapshot } from "@/lib/mockData";
 import { isLive } from "@/lib/contracts";
-import { fetchLiveSnapshot } from "@/lib/liveData";
-import type { OracleSnapshot } from "@/lib/types";
+import { fetchConfiguredAssets, fetchLiveSnapshot } from "@/lib/liveData";
+import type { Asset, OracleSnapshot } from "@/lib/types";
+import { SUPPORTED_ASSETS } from "@/lib/types";
 
-// Simulation refreshes every 3s; live mode polls contracts every 10s (RPC rate-limit friendly)
 const SIM_POLL_MS = 3_000;
 const LIVE_POLL_MS = 10_000;
+const ASSET_POLL_MS = 30_000;
 const PRICE_REFRESH_MS = 30_000;
 
 const ASSET_TO_CG_ID: Record<string, string> = {
@@ -19,8 +20,13 @@ const ASSET_TO_CG_ID: Record<string, string> = {
   AAVE: "aave",
 };
 
-async function fetchAssetPrice(asset: string): Promise<number | null> {
-  const cgId = ASSET_TO_CG_ID[asset] || "ethereum";
+function rootSymbol(symbol: string): string {
+  return symbol.split("-")[0];
+}
+
+async function fetchAssetPrice(assetSymbol: string): Promise<number | null> {
+  const root = rootSymbol(assetSymbol);
+  const cgId = ASSET_TO_CG_ID[root] ?? "ethereum";
   try {
     const res = await fetch(
       `https://api.coingecko.com/api/v3/simple/price?ids=${cgId}&vs_currencies=usd`,
@@ -37,11 +43,36 @@ async function fetchAssetPrice(asset: string): Promise<number | null> {
 export function useOracleData(activeAsset: string = "ETH") {
   const live = isLive();
   const [data, setData] = useState<OracleSnapshot | null>(null);
-  const [simMode] = useState(!live);
+  const [assets, setAssets] = useState<Asset[]>(SUPPORTED_ASSETS);
+  const [simMode, setSimMode] = useState(!live);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const assetsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const priceRef = useRef<number | null>(null);
+  const historyRef = useRef<Record<string, number[]>>({});
 
-  // Real asset price from CoinGecko — overlaid in both sim and live modes
+  useEffect(() => {
+    if (!live) {
+      setAssets(SUPPORTED_ASSETS);
+      return;
+    }
+
+    let cancelled = false;
+    const refreshAssets = async () => {
+      const configured = await fetchConfiguredAssets();
+      if (!cancelled && configured.length > 0) {
+        setAssets(configured);
+      }
+    };
+
+    refreshAssets();
+    assetsTimerRef.current = setInterval(refreshAssets, ASSET_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      if (assetsTimerRef.current) clearInterval(assetsTimerRef.current);
+    };
+  }, [live]);
+
   useEffect(() => {
     let cancelled = false;
     priceRef.current = null;
@@ -51,18 +82,41 @@ export function useOracleData(activeAsset: string = "ETH") {
     };
     refresh();
     const id = setInterval(refresh, PRICE_REFRESH_MS);
-    return () => { cancelled = true; clearInterval(id); };
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, [activeAsset]);
 
   useEffect(() => {
-    // Build a snapshot: start from mock baseline, overlay live data, overlay real asset price
+    const activeConfig = assets.find((a) => a.symbol === activeAsset);
+    const activeSymbol = activeConfig?.symbol ?? activeAsset;
+    const activeAddress = activeConfig?.address ?? activeSymbol;
+    const activeEnabled = activeConfig?.enabled ?? true;
+    const activeConfigured = activeConfig?.configured ?? false;
+
     const buildSnapshot = async (): Promise<OracleSnapshot> => {
-      const base = generateSnapshot(activeAsset);
+      if (live && activeConfigured && !activeEnabled) {
+        const disabled = generateDisabledSnapshot(
+          activeSymbol,
+          activeAddress,
+          true,
+          "Asset is registered but disabled (missing infra or intentionally off)."
+        );
+        if (priceRef.current) disabled.chainlink.feedPrice = priceRef.current;
+        return disabled;
+      }
+
+      const base = generateSnapshot(activeSymbol);
+      base.asset = activeSymbol;
+      base.assetAddress = activeAddress;
+      base.assetConfigured = activeConfigured || !live;
+      base.assetEnabled = activeEnabled || !live;
+      base.assetStatusNote = live ? "LIVE" : "SIMULATION";
 
       if (live) {
         try {
-          const liveData = await fetchLiveSnapshot(activeAsset);
-          // Deep-merge: live data wins field-by-field over the mock baseline
+          const liveData = await fetchLiveSnapshot(activeSymbol, activeAddress, activeEnabled);
           Object.assign(base, liveData);
           if (liveData.mco) Object.assign(base.mco, liveData.mco);
           if (liveData.tdrv) Object.assign(base.tdrv, liveData.tdrv);
@@ -71,20 +125,32 @@ export function useOracleData(activeAsset: string = "ETH") {
           if (liveData.circuitBreaker) Object.assign(base.circuitBreaker, liveData.circuitBreaker);
           if (liveData.chainlink) Object.assign(base.chainlink, liveData.chainlink);
         } catch {
-          // live fetch failed — serve the mock baseline silently
+          // keep baseline
         }
       }
 
-      // Always overlay real asset price if available (works in both modes)
       if (priceRef.current) {
         base.chainlink.feedPrice = priceRef.current;
+      }
+
+      // Multi-asset live mode returns a single latest point from router state.
+      // Keep a local ring buffer so chart and trend panels do not collapse to one dot.
+      if (live) {
+        const key = activeAddress.toLowerCase();
+        const prev = historyRef.current[key] ?? [];
+        const score = Math.max(0, Math.min(100, Number(base.compositeScore ?? 0)));
+        const next = [score, ...prev].slice(0, 8);
+        historyRef.current[key] = next;
+        base.scoreHistory = next;
       }
 
       return base;
     };
 
-    // Initial load
-    buildSnapshot().then(setData);
+    buildSnapshot().then((snapshot) => {
+      setData(snapshot);
+      setSimMode(!live);
+    });
 
     const interval = live ? LIVE_POLL_MS : SIM_POLL_MS;
     timerRef.current = setInterval(() => {
@@ -94,7 +160,7 @@ export function useOracleData(activeAsset: string = "ETH") {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [live, activeAsset]);
+  }, [live, activeAsset, assets]);
 
-  return { data, simMode };
+  return { data, simMode, assets };
 }

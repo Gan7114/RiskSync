@@ -3,19 +3,20 @@
 import { motion } from "framer-motion";
 import { Activity, Cpu, Radio, Wifi } from "lucide-react";
 import type { OracleSnapshot, Asset } from "@/lib/types";
-import { SUPPORTED_ASSETS } from "@/lib/types";
 import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 
 interface Props {
   data: OracleSnapshot | null;
   simMode: boolean;
+  assets: Asset[];
   activeAsset: string;
   setActiveAsset: (symbol: string) => void;
 }
 
-export default function Header({ data, simMode, activeAsset, setActiveAsset }: Props) {
+export default function Header({ data, simMode, assets, activeAsset, setActiveAsset }: Props) {
   const [isOpen, setIsOpen] = useState(false);
+  const selected = assets.find((a) => a.symbol === activeAsset);
 
   return (
     <header className="glass gradient-border sticky top-0 z-50 px-6 py-3 flex items-center justify-between">
@@ -47,13 +48,18 @@ export default function Header({ data, simMode, activeAsset, setActiveAsset }: P
           onClick={() => setIsOpen(!isOpen)}
           className="flex items-center gap-2 px-4 py-2 bg-[#1e293b] hover:bg-[#334155] border border-slate-700 rounded-lg text-slate-200 font-bold transition-colors"
         >
-          {SUPPORTED_ASSETS.find((a) => a.symbol === activeAsset)?.name || "Select Asset"} ({activeAsset})
+          {selected?.name ?? "Select Asset"} ({activeAsset})
+          {selected && !selected.enabled && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-950/60 text-red-300 border border-red-700">
+              DISABLED
+            </span>
+          )}
           <ChevronDown className="w-4 h-4 text-slate-400" />
         </button>
 
         {isOpen && (
           <div className="absolute top-12 left-0 w-48 bg-[#0f172a] border border-slate-800 rounded-lg shadow-xl overflow-hidden">
-            {SUPPORTED_ASSETS.map((asset) => (
+            {assets.map((asset) => (
               <button
                 key={asset.symbol}
                 onClick={() => {
@@ -63,7 +69,14 @@ export default function Header({ data, simMode, activeAsset, setActiveAsset }: P
                 className={`w-full text-left px-4 py-3 hover:bg-[#1e293b] transition-colors ${activeAsset === asset.symbol ? "text-indigo-400 bg-[#1e293b]/50" : "text-slate-300"
                   }`}
               >
-                <div className="font-bold">{asset.symbol}</div>
+                <div className="font-bold flex items-center gap-2">
+                  {asset.symbol}
+                  {!asset.enabled && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-950/60 text-red-300 border border-red-700">
+                      DISABLED
+                    </span>
+                  )}
+                </div>
                 <div className="text-xs text-slate-500">{asset.name}</div>
               </button>
             ))}
@@ -84,7 +97,7 @@ export default function Header({ data, simMode, activeAsset, setActiveAsset }: P
           </span>
           <span className="flex items-center gap-1.5">
             <Wifi className="w-3 h-3 text-indigo-400" />
-            <span className="text-slate-200">POLL 3s</span>
+            <span className="text-slate-200">{simMode ? "POLL 3s" : "POLL 10s"}</span>
           </span>
         </div>
       )}

@@ -48,6 +48,8 @@ interface Props {
 
 export default function ChainlinkPanel({ data }: Props) {
   const regimeColor = REGIME_COLOR[data.cvoRegime];
+  const upkeepInterval = Math.max(60, data.upkeepIntervalSeconds || 300);
+  const upkeepRemaining = Math.max(0, Math.min(upkeepInterval, data.nextUpkeepIn));
 
   return (
     <motion.div
@@ -144,14 +146,14 @@ export default function ChainlinkPanel({ data }: Props) {
                   strokeLinecap="round"
                   strokeDasharray={`${2 * Math.PI * 28}`}
                   animate={{
-                    strokeDashoffset: `${2 * Math.PI * 28 * (1 - (data.nextUpkeepIn / 300))}`
+                    strokeDashoffset: `${2 * Math.PI * 28 * (1 - (upkeepRemaining / upkeepInterval))}`
                   }}
                   transition={{ duration: 0.6 }}
                 />
               </svg>
               <div className="absolute inset-0 flex items-center justify-center">
                 <span className="text-sm font-mono font-bold text-emerald-400">
-                  {fmtCountdown(data.nextUpkeepIn)}
+                  {fmtCountdown(upkeepRemaining)}
                 </span>
               </div>
             </div>
@@ -162,7 +164,7 @@ export default function ChainlinkPanel({ data }: Props) {
             label="Last Upkeep"
             value={`${Math.floor((Date.now() / 1000 - data.lastUpkeepTimestamp) / 60)}m ago`}
           />
-          <Row label="Interval" value="5 min" />
+          <Row label="Interval" value={`${Math.round(upkeepInterval / 60)} min`} />
           {/* Heartbeat bar */}
           <div className="mt-2">
             <div className="flex gap-1">

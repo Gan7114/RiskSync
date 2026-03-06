@@ -1499,7 +1499,9 @@ contract MockRiskScoreProvider is IRiskScoreProvider {
     function setScore(uint256 score) external { s_score = score; }
 
     function getRiskScore() external view override returns (uint256) { return s_score; }
+    function getRiskScore(address) external view override returns (uint256) { return s_score; }
     function lastUpdatedAt() external view override returns (uint256) { return block.timestamp; }
+    function lastUpdatedAt(address) external view override returns (uint256) { return block.timestamp; }
 }
 
 // ─── MCO Multi-Window Tests ───────────────────────────────────────────────────
@@ -1941,13 +1943,13 @@ contract CircuitBreakerTest is Test {
     function setUp() public {
         vm.warp(10_000);
         scoreProvider = new MockRiskScoreProvider();
-        cb = new LendingProtocolCircuitBreaker(address(scoreProvider));
+        cb = new LendingProtocolCircuitBreaker(address(scoreProvider), address(0x22));
     }
 
     /// @notice Deploying with address(0) reverts ZeroCompositor.
     function test_constructor_zeroCompositor_reverts() public {
         vm.expectRevert(RiskCircuitBreaker.ZeroCompositor.selector);
-        new LendingProtocolCircuitBreaker(address(0));
+        new LendingProtocolCircuitBreaker(address(0), address(0x22));
     }
 
     /// @notice Initial state: NOMINAL level, 80% LTV, borrowing and depositing active.
@@ -2543,27 +2545,31 @@ contract MockAggregatorV3 {
     }
 }
 
-/// @dev Mock compositor for AutomatedRiskUpdater tests.
-contract MockCompositorForARU {
-    uint256 public riskScore;
-    uint8   public riskTier;
-    uint256 public recommendedLtv;
+/// @dev Mock router for AutomatedRiskUpdater tests.
+contract MockRouterForARU {
     uint256 public callCount;
 
-    function setValues(uint256 score, uint8 tier, uint256 ltv) external {
-        riskScore = score;
-        riskTier  = tier;
-        recommendedLtv = ltv;
-    }
-
-    function updateRiskScore() external returns (uint256, uint8, uint256) {
+    function updateRiskForAssets(address[] calldata assets) external returns (uint256 updated, uint256 failed) {
         callCount++;
-        return (riskScore, riskTier, recommendedLtv);
+        return (assets.length, 0);
+    }
+}
+
+/// @dev Mock registry for AutomatedRiskUpdater tests.
+contract MockRegistryForARU {
+    address[] public assets;
+    
+    function setAssets(address[] calldata _assets) external {
+        assets = _assets;
+    }
+    
+    function getSupportedAssets() external view returns (address[] memory) {
+        return assets;
     }
 
-    function getRiskScore() external view returns (uint256) { return riskScore; }
-    function getRiskTier()  external view returns (uint8)   { return riskTier; }
-    function getRecommendedLtv() external view returns (uint256) { return recommendedLtv; }
+    function getEnabledAssets() external view returns (address[] memory) {
+        return assets;
+    }
 }
 
 /// @dev Mock circuit breaker for AutomatedRiskUpdater tests.
@@ -2763,37 +2769,42 @@ contract ChainlinkVolatilityOracleTest is Test {
 // ============================================================================
 
 contract AutomatedRiskUpdaterTest is Test {
-    MockCompositorForARU   compositor;
+    MockRouterForARU   router;
+    MockRegistryForARU registry;
     MockCircuitBreakerForARU cb;
     uint256 constant INTERVAL = 300; // 5 min
 
     function setUp() public {
         vm.warp(10_000);
-        compositor = new MockCompositorForARU();
+        router = new MockRouterForARU();
+        registry = new MockRegistryForARU();
         cb = new MockCircuitBreakerForARU();
-        compositor.setValues(55, 2, 7000);
         cb.setLevelChanged(true);
     }
 
     function _deploy() internal returns (AutomatedRiskUpdater) {
-        return new AutomatedRiskUpdater(address(compositor), address(cb), INTERVAL);
+        return new AutomatedRiskUpdater(address(router), address(registry), address(cb), INTERVAL);
     }
 
     // ── constructor validation ────────────────────────────────────────────────
 
-    function test_constructor_rejectsZeroCompositor() public {
-        vm.expectRevert("ARU: zero compositor");
-        new AutomatedRiskUpdater(address(0), address(cb), INTERVAL);
+    function test_constructor_rejectsZeroRouter() public {
+        vm.expectRevert("ARU: zero router");
+        new AutomatedRiskUpdater(address(0), address(registry), address(cb), INTERVAL);
     }
 
-    function test_constructor_rejectsZeroCB() public {
-        vm.expectRevert("ARU: zero circuit breaker");
-        new AutomatedRiskUpdater(address(compositor), address(0), INTERVAL);
+    function test_constructor_rejectsZeroRegistry() public {
+        vm.expectRevert("ARU: zero registry");
+        new AutomatedRiskUpdater(address(router), address(0), address(cb), INTERVAL);
+    }
+
+    function test_constructor_acceptsZeroCB() public {
+        new AutomatedRiskUpdater(address(router), address(registry), address(0), INTERVAL);
     }
 
     function test_constructor_rejectsShortInterval() public {
         vm.expectRevert("ARU: min 60s interval");
-        new AutomatedRiskUpdater(address(compositor), address(cb), 59);
+        new AutomatedRiskUpdater(address(router), address(registry), address(cb), 59);
     }
 
     function test_constructor_storesOwner() public {
@@ -2811,6 +2822,10 @@ contract AutomatedRiskUpdaterTest is Test {
     }
 
     function test_checkUpkeep_falseWhenTooSoon() public {
+        address[] memory assets = new address[](1);
+        assets[0] = address(1);
+        registry.setAssets(assets);
+
         AutomatedRiskUpdater aru = _deploy();
         (bool needed,) = aru.checkUpkeep("");
         assertTrue(needed); // Initially true (no previous upkeep)
@@ -2820,6 +2835,10 @@ contract AutomatedRiskUpdaterTest is Test {
     }
 
     function test_checkUpkeep_trueAfterInterval() public {
+        address[] memory assets = new address[](1);
+        assets[0] = address(1);
+        registry.setAssets(assets);
+
         AutomatedRiskUpdater aru = _deploy();
         aru.performUpkeep("");
         vm.warp(block.timestamp + INTERVAL + 1);
@@ -2834,44 +2853,55 @@ contract AutomatedRiskUpdaterTest is Test {
         assertFalse(needed);
     }
 
-    // ── performUpkeep execution ───────────────────────────────────────────────
+    // ── performUpkeep logic ───────────────────────────────────────────────────
 
-    function test_performUpkeep_callsCompositorAndCB() public {
-        AutomatedRiskUpdater aru = _deploy();
-        aru.performUpkeep("");
-        assertEq(compositor.callCount(), 1);
-        assertEq(cb.respondCallCount(), 1);
-        assertEq(aru.upkeepCount(), 1);
-    }
-
-    function test_performUpkeep_updatestimestamp() public {
-        AutomatedRiskUpdater aru = _deploy();
-        uint256 before = aru.lastUpkeepTimestamp();
-        aru.performUpkeep("");
-        assertEq(aru.lastUpkeepTimestamp(), block.timestamp);
-        assertGt(aru.lastUpkeepTimestamp(), before);
-    }
-
-    function test_performUpkeep_rejectsWhenPaused() public {
+    function test_performUpkeep_revertsIfPaused() public {
         AutomatedRiskUpdater aru = _deploy();
         aru.pause();
         vm.expectRevert("ARU: paused");
         aru.performUpkeep("");
     }
 
-    function test_performUpkeep_rejectsWhenTooSoon() public {
+    function test_performUpkeep_revertsIfTooSoon() public {
         AutomatedRiskUpdater aru = _deploy();
+        // Just deployed at block.timestamp = 10_000, lastUpkeep = 0.
+        // Wait, start from lastUpkeep = 0, next time is 0 + 300 = 300.
+        // But block.timestamp is 10_000, so it IS ready exactly now.
+        // Let's perform it once.
         aru.performUpkeep("");
+
+        // Now lastUpkeep = 10_000. Next earliest is 10_300.
+        vm.warp(10_299);
         vm.expectRevert("ARU: too soon");
-        aru.performUpkeep(""); // immediate second call
+        aru.performUpkeep("");
     }
 
-    function test_performUpkeep_skipsCBWhenInCooldown() public {
+    function test_performUpkeep_executesSuccessfully() public {
+        address[] memory assets = new address[](2);
+        assets[0] = address(1);
+        assets[1] = address(2);
+        registry.setAssets(assets);
+
+        AutomatedRiskUpdater aru = _deploy();
+        aru.performUpkeep("");
+
+        assertEq(router.callCount(), 1, "Router should be called");
+        assertEq(cb.respondCallCount(), 1, "CB respond should be called");
+        assertEq(aru.lastUpkeepTimestamp(), block.timestamp);
+        assertEq(aru.upkeepCount(), 1);
+    }
+
+    function test_performUpkeep_skipsCbIfCooldown() public {
+        address[] memory assets = new address[](1);
+        assets[0] = address(1);
+        registry.setAssets(assets);
+
         AutomatedRiskUpdater aru = _deploy();
         cb.setCooldown(true);
-        aru.performUpkeep(""); // should not call checkAndRespond
-        assertEq(cb.respondCallCount(), 0);
-        assertEq(compositor.callCount(), 1); // compositor still called
+        aru.performUpkeep("");
+
+        assertEq(router.callCount(), 1);
+        assertEq(cb.respondCallCount(), 0, "CB in cooldown -> skipped checkAndRespond");
     }
 
     // ── owner functions ────────────────────────────────────────────────────────
@@ -2916,21 +2946,45 @@ contract AutomatedRiskUpdaterTest is Test {
         uint256 remaining = aru.secondsUntilNextUpkeep();
         assertEq(remaining, INTERVAL); // full interval remaining
     }
-
-    function test_currentRiskScore() public {
-        AutomatedRiskUpdater aru = _deploy();
-        assertEq(aru.currentRiskScore(), 55);
-    }
 }
 
 // ============================================================================
 // CrossChainRiskBroadcaster Tests
 // ============================================================================
 
+contract MockRouterForCCIP {
+    uint256 public score;
+    uint8   public tier;
+    uint256 public ltv;
+
+    function setValues(uint256 s, uint8 t, uint256 l) external {
+        score = s;
+        tier = t;
+        ltv = l;
+    }
+
+    function assetRiskState(address) external view returns (
+        uint256 compositeScore,
+        uint256,
+        uint256,
+        uint256,
+        uint256,
+        uint8 t,
+        uint256 recommendedLtvBps,
+        uint256,
+        uint256,
+        uint256,
+        uint256
+    ) {
+        return (score, 0, 0, 0, 0, tier, ltv, 0, 0, 0, block.timestamp);
+    }
+}
+
 contract CrossChainRiskBroadcasterTest is Test {
-    MockCCIPRouter         router;
-    MockCompositorForARU   compositor;
+    MockCCIPRouter         ccipRouter;
+    MockRouterForCCIP      router;
     MockCircuitBreakerForARU cb;
+    address constant       WETH = address(0x2222);
 
     uint64 constant CHAIN_BASE    = 15_971_525_489_660_198_913;
     uint64 constant CHAIN_ARB     = 4_949_039_107_694_359_620;
@@ -2938,29 +2992,32 @@ contract CrossChainRiskBroadcasterTest is Test {
 
     function setUp() public {
         vm.warp(1_700_000_000);
-        router    = new MockCCIPRouter();
-        compositor = new MockCompositorForARU();
+        ccipRouter    = new MockCCIPRouter();
+        router     = new MockRouterForCCIP();
         cb         = new MockCircuitBreakerForARU();
-        compositor.setValues(80, 3, 6000);
+        router.setValues(80, 3, 6000);
         cb.setLevel(3); // DANGER
     }
 
     function _deploy() internal returns (CrossChainRiskBroadcaster) {
         return new CrossChainRiskBroadcaster(
-            address(router), address(compositor), address(cb)
+            address(ccipRouter),
+            address(router),
+            WETH,
+            address(cb)
         );
     }
 
     // ── constructor validation ────────────────────────────────────────────────
 
     function test_constructor_rejectsZeroCompositor() public {
-        vm.expectRevert("CCRB: zero compositor");
-        new CrossChainRiskBroadcaster(address(router), address(0), address(cb));
+        vm.expectRevert(CrossChainRiskBroadcaster.InvalidConfig.selector);
+        new CrossChainRiskBroadcaster(address(ccipRouter), address(0), WETH, address(cb));
     }
 
     function test_constructor_rejectsZeroCB() public {
-        vm.expectRevert("CCRB: zero circuit breaker");
-        new CrossChainRiskBroadcaster(address(router), address(compositor), address(0));
+        vm.expectRevert(CrossChainRiskBroadcaster.InvalidConfig.selector);
+        new CrossChainRiskBroadcaster(address(ccipRouter), address(router), WETH, address(0));
     }
 
     function test_constructor_storesOwnerAndThreshold() public {
@@ -3031,12 +3088,12 @@ contract CrossChainRiskBroadcasterTest is Test {
         CrossChainRiskBroadcaster ccrb = _deploy();
         ccrb.addDestination(CHAIN_BASE, RECEIVER);
 
-        uint256 fee = router.feeToReturn();
+        uint256 fee = ccipRouter.feeToReturn();
         vm.deal(address(this), fee + 1 ether);
 
         bytes32 msgId = ccrb.broadcastTo{value: fee}(CHAIN_BASE);
-        assertEq(msgId, router.lastMessageId());
-        assertEq(router.sendCallCount(), 1);
+        assertEq(msgId, ccipRouter.lastMessageId());
+        assertEq(ccipRouter.sendCallCount(), 1);
         assertEq(ccrb.broadcastCount(), 1);
     }
 
@@ -3044,7 +3101,7 @@ contract CrossChainRiskBroadcasterTest is Test {
         CrossChainRiskBroadcaster ccrb = _deploy();
         ccrb.addDestination(CHAIN_BASE, RECEIVER);
 
-        uint256 fee = router.feeToReturn();
+        uint256 fee = ccipRouter.feeToReturn();
         uint256 overpay = fee + 0.5 ether;
         vm.deal(address(this), overpay);
 
@@ -3076,13 +3133,13 @@ contract CrossChainRiskBroadcasterTest is Test {
         ccrb.addDestination(CHAIN_BASE, RECEIVER);
         ccrb.addDestination(CHAIN_ARB,  address(0xAAAA));
 
-        router.setFee(0.01 ether);
+        ccipRouter.setFee(0.01 ether);
         uint256 totalNeeded = 0.02 ether;
         vm.deal(address(this), totalNeeded + 0.1 ether);
 
         uint256 spent = ccrb.broadcastToAll{value: totalNeeded + 0.1 ether}();
         assertEq(spent, totalNeeded, "should spend exactly 2x fee");
-        assertEq(router.sendCallCount(), 2, "should send to 2 chains");
+        assertEq(ccipRouter.sendCallCount(), 2, "should send to 2 chains");
     }
 
     function test_broadcastToAll_skipsInactiveDestination() public {
@@ -3091,11 +3148,11 @@ contract CrossChainRiskBroadcasterTest is Test {
         ccrb.addDestination(CHAIN_ARB,  address(0xAAAA));
         ccrb.removeDestination(CHAIN_BASE); // deactivate first
 
-        router.setFee(0.01 ether);
+        ccipRouter.setFee(0.01 ether);
         vm.deal(address(this), 1 ether);
 
         ccrb.broadcastToAll{value: 0.1 ether}();
-        assertEq(router.sendCallCount(), 1, "should only send to active chain");
+        assertEq(ccipRouter.sendCallCount(), 1, "should only send to active chain");
     }
 
     function test_broadcastToAll_rejectsBelowThreshold() public {
@@ -3114,7 +3171,7 @@ contract CrossChainRiskBroadcasterTest is Test {
         CrossChainRiskBroadcaster ccrb = _deploy();
         ccrb.addDestination(CHAIN_BASE, RECEIVER);
         uint256 fee = ccrb.estimateFee(CHAIN_BASE);
-        assertEq(fee, router.feeToReturn());
+        assertEq(fee, ccipRouter.feeToReturn());
     }
 
     // ── receive() allows ETH deposit ──────────────────────────────────────────

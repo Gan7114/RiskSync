@@ -2,7 +2,7 @@
 
 **Chainlink Convergence 2026 Hackathon Submission — Risk & Compliance Track**
 
-On-chain risk middleware for DeFi — ten composable contracts that measure oracle manipulation cost, realized volatility, cross-protocol liquidation cascades, and tick-sequence entropy. It unifies these into a single risk score with autonomous circuit breakers and Chainlink Automation/CCIP.
+On-chain risk middleware for DeFi — twelve composable contracts that measure oracle manipulation cost, realized volatility, cross-protocol liquidation cascades, and tick-sequence entropy. It now includes a true multi-asset registry/router layer so ETH/BTC/LINK/AAVE can share one protocol deployment.
 
 ## 🎖 Hackathon Submission (March 2026)
 
@@ -12,6 +12,13 @@ This project is built for the **Chainlink Convergence 2026 Hackathon**. It lever
 - **Automation**: 5-minute decentralized heartbeat for risk updates (`AutomatedRiskUpdater.sol`).
 - **CCIP**: Cross-chain risk alert propagation to Base, Arbitrum, and Optimism.
 - **Price Feeds**: Real-time volatility verification (`ChainlinkVolatilityOracle.sol`).
+
+### ☁️ Cloud Is Required
+This project is intentionally cloud-connected and depends on Chainlink network services:
+- Chainlink Automation (scheduled upkeep execution)
+- Chainlink CCIP (cross-chain risk broadcast)
+- Chainlink CRE workflow execution (`workflows/risk-orchestrator`)
+- RPC access for live Sepolia/Mainnet verification
 
 ## Live Demo (Dashboard)
 
@@ -23,16 +30,21 @@ This project is built for the **Chainlink Convergence 2026 Hackathon**. It lever
 
 | Contract | Address | Etherscan |
 |---|---|---|
-| ManipulationCostOracle | `0xB3C34601FA06E78afe459C0c16D49449d575669B` | [view](https://sepolia.etherscan.io/address/0xB3C34601FA06E78afe459C0c16D49449d575669B) |
-| TickDerivedRealizedVolatility | `0x2DFc934b215C2D1ceCA838e7b53CFCae08877Ccf` | [view](https://sepolia.etherscan.io/address/0x2DFc934b215C2D1ceCA838e7b53CFCae08877Ccf) |
-| CrossProtocolCascadeScore | `0xD34314722A972925F4A2D5fFf0752aBbD8F39675` | [view](https://sepolia.etherscan.io/address/0xD34314722A972925F4A2D5fFf0752aBbD8F39675) |
-| TickConcentrationOracle | `0xeCF62d406025b06b9FC44198235C30EFde62a3e9` | [view](https://sepolia.etherscan.io/address/0xeCF62d406025b06b9FC44198235C30EFde62a3e9) |
-| UnifiedRiskCompositor | `0x191A27Eae07712410A0f37FFd4477B82412AA31e` | [view](https://sepolia.etherscan.io/address/0x191A27Eae07712410A0f37FFd4477B82412AA31e) |
-| LendingProtocolCircuitBreaker | `0x3b2859D5c62F78146836Bb47a76e1556cfdEfC3c` | [view](https://sepolia.etherscan.io/address/0x3b2859D5c62F78146836Bb47a76e1556cfdEfC3c) |
-| StressScenarioRegistry | `0xA1C034E51Db8d80A50dB9e096638950ceABCE666` | [view](https://sepolia.etherscan.io/address/0xA1C034E51Db8d80A50dB9e096638950ceABCE666) |
-| ChainlinkVolatilityOracle | `0x9b27152bE4ddc75C1ad7614BD18858D5966B9E8F` | [view](https://sepolia.etherscan.io/address/0x9b27152bE4ddc75C1ad7614BD18858D5966B9E8F) |
-| AutomatedRiskUpdater | `0xd3DD2704AE928e130825b4db9C0e862419e7aB40` | [view](https://sepolia.etherscan.io/address/0xd3DD2704AE928e130825b4db9C0e862419e7aB40) |
-| CrossChainRiskBroadcaster | `0x7639A986bC26012216A57Ea1E53aF14B26E70077` | [view](https://sepolia.etherscan.io/address/0x7639A986bC26012216A57Ea1E53aF14B26E70077) |
+| ManipulationCostOracle | `0xf410d4450A98cB1304e7F5B529EBcd30801b771C` | [view](https://sepolia.etherscan.io/address/0xf410d4450A98cB1304e7F5B529EBcd30801b771C) |
+| TickDerivedRealizedVolatility | `0x25Ec7B78DaaB44137121ceD05FAcc07A2dFB0570` | [view](https://sepolia.etherscan.io/address/0x25Ec7B78DaaB44137121ceD05FAcc07A2dFB0570) |
+| CrossProtocolCascadeScore | `0x075D2961682F72C4fbf6d43FBF6a34bf7BBc0B72` | [view](https://sepolia.etherscan.io/address/0x075D2961682F72C4fbf6d43FBF6a34bf7BBc0B72) |
+| TickConcentrationOracle | `0x54F4050Dc6e61611F99FC8F4C85b081f7aa6749C` | [view](https://sepolia.etherscan.io/address/0x54F4050Dc6e61611F99FC8F4C85b081f7aa6749C) |
+| UnifiedRiskCompositor | `0x153D2bc4bdDdB1b6b54f127e718bdE004d75AB44` | [view](https://sepolia.etherscan.io/address/0x153D2bc4bdDdB1b6b54f127e718bdE004d75AB44) |
+| LendingProtocolCircuitBreaker | `0x297A1BccC9F1578B4c3fA2701fCf6Ad8a41E1fEa` | [view](https://sepolia.etherscan.io/address/0x297A1BccC9F1578B4c3fA2701fCf6Ad8a41E1fEa) |
+| StressScenarioRegistry | `0xb7Ac84503e02a95ae06494FF44594139dAAE51dC` | [view](https://sepolia.etherscan.io/address/0xb7Ac84503e02a95ae06494FF44594139dAAE51dC) |
+| ChainlinkVolatilityOracle | `0x2DD8064f972168d3eEadedb90BbBd4B49DaC046c` | [view](https://sepolia.etherscan.io/address/0x2DD8064f972168d3eEadedb90BbBd4B49DaC046c) |
+| AssetRegistry | `0xAc8509a209eF27BD92A43C31F33705e1c30376d8` | [view](https://sepolia.etherscan.io/address/0xAc8509a209eF27BD92A43C31F33705e1c30376d8) |
+| MultiAssetRiskRouter | `0x6BF3B6DfB0884A45a54140D38513F991Cf633721` | [view](https://sepolia.etherscan.io/address/0x6BF3B6DfB0884A45a54140D38513F991Cf633721) |
+| AutomatedRiskUpdater | `0x473779900D540F0098D4EDf40bD3b94a36f8731C` | [view](https://sepolia.etherscan.io/address/0x473779900D540F0098D4EDf40bD3b94a36f8731C) |
+| CrossChainRiskBroadcaster | `0xFd51A5E98355dC874Bf75EA6ED36Ae159810bFBE` | [view](https://sepolia.etherscan.io/address/0xFd51A5E98355dC874Bf75EA6ED36Ae159810bFBE) |
+
+`AssetRegistry` and `MultiAssetRiskRouter` are included in the upgraded deployment scripts and should be exported to dashboard env vars:
+`NEXT_PUBLIC_ASSET_REGISTRY_ADDRESS`, `NEXT_PUBLIC_MULTI_ASSET_ROUTER_ADDRESS`.
 
 **External integrations on Sepolia:**
 - Chainlink ETH/USD feed: `0x694AA1769357215DE4FAC081bf1f309aDC325306`
@@ -46,6 +58,8 @@ This project is built for the **Chainlink Convergence 2026 Hackathon**. It lever
 
 ```
 src/
+├── AssetRegistry.sol                  — Owner-managed per-asset config + enabled/disabled state
+├── MultiAssetRiskRouter.sol           — Per-asset risk cache/router (MCO+TDRV+CPLCS+TCO)
 ├── ManipulationCostOracle.sol          — Pillar 1: TWAP attack cost via tick-bitmap walk
 ├── TickDerivedRealizedVolatility.sol   — Pillar 2: 24-h realized vol + EWMA + regime
 ├── CrossProtocolCascadeScore.sol       — Pillar 3: Aave/Compound/Morpho/Euler cascade
@@ -62,13 +76,38 @@ src/
     └── TickMathLib.sol                 — Shared Uniswap V3 tick <-> sqrtPrice math
 
 test/foundry/
-├── NovelSystem.t.sol  — 163 unit tests (mock-based, no RPC needed)
+├── NovelSystem.t.sol             — Core system unit tests
+├── MultiAssetArchitecture.t.sol  — Mandatory multi-asset registry/router/upkeep tests
 └── ForkTests.t.sol    — 21 mainnet fork tests (auto-skip when MAINNET_RPC_URL unset)
 
 script/
-├── Deploy.s.sol         — One-shot mainnet deployment (all 10 contracts)
-└── DeploySepolia.s.sol  — Sepolia testnet deployment (testnet-friendly windows)
+├── Deploy.s.sol         — Mainnet deployment + multi-asset registry seed (enable/disable aware)
+└── DeploySepolia.s.sol  — Sepolia deployment + multi-asset registry seed (enable/disable aware)
 ```
+
+## Multi-Asset Architecture (No Per-Token Redeploy)
+
+The protocol is now split into:
+
+1. **Primitive oracles** (`MCO`, `TDRV`, `CPLCS`, `TCO`) deployed once.
+2. **`AssetRegistry`** with per-asset config:
+   - `asset`, `pool`, `feed`, `token1Decimals`, `shockBps`
+   - `mcoThresholdLow`, `mcoThresholdHigh`, `enabled`
+3. **`MultiAssetRiskRouter`** that computes and caches `RiskState` per asset:
+   - `score`, `tier`, `recommendedLtv`, `updatedAt`
+   - component inputs (`mcoInput`, `tdrvInput`, `cpInput`, `tcoInput`)
+4. **`AutomatedRiskUpdater`** batch cursor for gas-safe N-asset updates per upkeep call.
+
+This means one protocol deployment can cover multiple collateral assets. Adding a token is now a config update, not a full contract redeploy.
+
+### Configured Asset Reality (Current Script Defaults)
+
+| Network | ETH | BTC | LINK | AAVE |
+|---|---|---|---|---|
+| Mainnet script default | Enabled | Disabled unless `BTC_UNI_POOL` env is set | Disabled unless `LINK_UNI_POOL` env is set | Disabled unless `AAVE_UNI_POOL` env is set |
+| Sepolia script default | Enabled | Disabled unless env pool+feed are set | Disabled unless env pool+feed are set | Disabled unless env pool+feed are set |
+
+Disabled assets are explicitly marked disabled in registry and dashboard (not shown as fake live).
 
 ## Composite Score Formula
 
@@ -307,6 +346,33 @@ See **[docs/JUDGE_PACK.md](docs/JUDGE_PACK.md)** for:
 - Exact `cast call` commands to read live Sepolia data
 - Expected outputs for each Chainlink product
 - Complete `forge test` + `npm build` commands
+- Registry/router verification commands for multi-asset mode (`getSupportedAssets`, `getConfig`, `assetRiskState`)
+
+### Multi-Asset Verification Commands
+
+```shell
+# AssetRegistry: all configured assets
+cast call $ASSET_REGISTRY \
+  "getSupportedAssets()(address[])" \
+  --rpc-url $SEPOLIA_RPC_URL
+
+# AssetRegistry: enabled-only assets
+cast call $ASSET_REGISTRY \
+  "getEnabledAssets()(address[])" \
+  --rpc-url $SEPOLIA_RPC_URL
+
+# AssetRegistry: config for one asset
+cast call $ASSET_REGISTRY \
+  "getConfig(address)((address,address,address,uint8,uint256,uint256,uint256,bool))" \
+  $ASSET_ADDRESS \
+  --rpc-url $SEPOLIA_RPC_URL
+
+# MultiAssetRiskRouter: cached risk state for one asset
+cast call $MULTI_ASSET_ROUTER \
+  "assetRiskState(address)(uint256,uint256,uint256,uint256,uint256,uint8,uint256,uint256,uint256,uint256,uint256)" \
+  $ASSET_ADDRESS \
+  --rpc-url $SEPOLIA_RPC_URL
+```
 
 Three contracts add deep Chainlink product coverage on top of the four-pillar core.
 
@@ -341,8 +407,8 @@ new ChainlinkVolatilityOracle(
 ### AutomatedRiskUpdater — Chainlink Automation
 
 Implements `AutomationCompatibleInterface` so a **Chainlink Automation** keeper calls
-`updateRiskScore()` and `checkAndRespond()` every 5 minutes — no off-chain bot required,
-no single point of failure, Sybil-resistant via the Chainlink DON.
+batched `updateRiskForAssets()` and `checkAndRespond()` every 5 minutes — no off-chain
+bot required, no single point of failure, Sybil-resistant via the Chainlink DON.
 
 ```solidity
 (bool upkeepNeeded, bytes memory) = aru.checkUpkeep("");
@@ -350,12 +416,11 @@ aru.performUpkeep(""); // called by Automation Node
 
 uint256 count    = aru.upkeepCount();
 uint256 nextIn   = aru.secondsUntilNextUpkeep();
-uint256 score    = aru.currentRiskScore();
 ```
 
 > **Live Sepolia Automation Proof:**
 > `AutomatedRiskUpdater` is actively registered on the Chainlink Automation Network.
-> **Upkeep ID**: `43299524312024280719987296485661783062184338223244119633145042715674688313470`
+> **Upkeep ID**: `55979398141976704248916940835648987232607128922315091009692569738181087735824`
 
 `checkUpkeep` returns `true` when:
 - Contract is not paused
@@ -369,7 +434,7 @@ to any registered L2 destination via **Chainlink CCIP** whenever the alert level
 at or above the configured threshold (default: WARNING).
 
 > **Live Sepolia CCIP Integration Proof:**
-> See **[CCIP Explorer Link](https://ccip.chain.link/msg/0xe2ab53e3cfd9ed10c6d0b4db3b6a2a984259677e9e956a9d97074f2fb4031724)** for a live cross-chain message successfully sent from Sepolia to Base Sepolia using this implementation.
+> See **[CCIP Explorer Link](https://ccip.chain.link/msg/0x214808a8a6990228fb270ccb83ab45d37ddf3b58f3044a6d250889a61528209e)** for a live cross-chain message successfully sent from Sepolia to Base Sepolia using this implementation.
 
 ```solidity
 // Register a destination chain
@@ -397,10 +462,14 @@ Optimism, or any CCIP-supported network.
 # Install Foundry
 curl -L https://foundry.paradigm.xyz | bash && foundryup
 
+# Install JS dependencies (root + dashboard)
+npm install
+npm --prefix dashboard install
+
 # Build
 forge build
 
-# Unit tests (no RPC needed — 184 tests total)
+# Unit tests (no RPC needed — 192 tests total)
 forge test --no-match-path test/foundry/ForkTests.t.sol -vvv
 
 # Mainnet fork tests (requires RPC)
@@ -427,7 +496,7 @@ forge script script/Deploy.s.sol \
   --broadcast --verify
 ```
 
-Both scripts deploy all 10 contracts in dependency order and log each address.
+Both scripts deploy all core + multi-asset contracts in dependency order and log each address.
 
 **Dashboard** (live mode — point to deployed contracts):
 ```shell
@@ -446,7 +515,7 @@ vercel --prod        # deploy to Vercel
 | Cost threshold low | $1M | MCO score = 0 below this |
 | Cost threshold high | $100M | MCO score = 100 above this |
 | Vol sample window | 24 x 1 h | TDRV realized vol span |
-| TCO samples | 24, window 1440 s | Tick entropy observation count |
+| TCO samples | 24, window 86400 s | Tick entropy observation window (24h) |
 | Composite weights | 30 / 35 / 20 / 15 | MCO / TDRV / CPLCS / TCO |
 | EWMA alpha (URC) | 3000 BPS (30%) | Score smoothing decay |
 | Circuit breaker cooldown | 300 s | Min seconds between alert transitions |

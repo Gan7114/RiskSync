@@ -1,0 +1,125 @@
+package contracts
+
+import (
+	"fmt"
+
+	"github.com/Masterminds/semver/v3"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/rs/zerolog"
+
+	cldf "github.com/smartcontractkit/chainlink-deployments-framework/deployment"
+	"github.com/smartcontractkit/chainlink-deployments-framework/operations"
+	"github.com/smartcontractkit/chainlink/deployment/cre/ocr3"
+	"github.com/smartcontractkit/chainlink/deployment/cre/ocr3/ocr3_1"
+	keystone_changeset "github.com/smartcontractkit/chainlink/deployment/keystone/changeset"
+	ks_contracts_op "github.com/smartcontractkit/chainlink/deployment/keystone/changeset/operations/contracts"
+	"github.com/smartcontractkit/chainlink/system-tests/lib/cre"
+)
+
+func DeployOCR3Contract(logger zerolog.Logger, qualifier string, selector uint64, env *cldf.Environment, contractVersions map[cre.ContractType]*semver.Version) (*ks_contracts_op.DeployOCR3ContractSequenceOutput, *common.Address, error) {
+	memoryDatastore, mErr := NewDataStoreFromExisting(env.DataStore)
+	if mErr != nil {
+		return nil, nil, fmt.Errorf("failed to create memory datastore: %w", mErr)
+	}
+
+	ocr3DeployReport, err := operations.ExecuteSequence(
+		env.OperationsBundle,
+		ks_contracts_op.DeployOCR3ContractsSequence,
+		ks_contracts_op.DeployOCR3ContractSequenceDeps{
+			Env: env,
+		},
+		ks_contracts_op.DeployOCR3ContractSequenceInput{
+			ChainSelector: selector,
+			Qualifier:     qualifier,
+		},
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to deploy OCR3 contract '%s' on chain %d: %w", qualifier, selector, err)
+	}
+	if err = memoryDatastore.Merge(ocr3DeployReport.Output.Datastore); err != nil {
+		return nil, nil, fmt.Errorf("failed to merge datastore with OCR3 contract address for '%s' on chain %d: %w", qualifier, selector, err)
+	}
+
+	address := MustGetAddressFromMemoryDataStore(memoryDatastore, selector, keystone_changeset.OCR3Capability.String(), contractVersions[keystone_changeset.OCR3Capability.String()], qualifier)
+	logger.Info().Msgf("Deployed OCR3 %s contract on chain %d at %s [qualifier: %s]", contractVersions[keystone_changeset.OCR3Capability.String()], selector, address, qualifier)
+
+	env.DataStore = memoryDatastore.Seal()
+
+	return &ocr3DeployReport.Output, &address, nil
+}
+
+// values supplied by Alexandr Yepishev as the expected values for OCR3 config
+func DefaultOCR3Config() *ocr3.OracleConfig {
+	// values supplied by Alexandr Yepishev as the expected values for OCR3 config
+	oracleConfig := &keystone_changeset.OracleConfig{
+		DeltaProgressMillis:               5000,
+		DeltaResendMillis:                 5000,
+		DeltaInitialMillis:                5000,
+		DeltaRoundMillis:                  2000,
+		DeltaGraceMillis:                  500,
+		DeltaCertifiedCommitRequestMillis: 1000,
+		DeltaStageMillis:                  30000,
+		MaxRoundsPerEpoch:                 10,
+		MaxDurationQueryMillis:            1000,
+		MaxDurationObservationMillis:      1000,
+		MaxDurationShouldAcceptMillis:     1000,
+		MaxDurationShouldTransmitMillis:   1000,
+		MaxFaultyOracles:                  1,
+		ConsensusCapOffchainConfig: &ocr3.ConsensusCapOffchainConfig{
+			MaxQueryLengthBytes:       1000000,
+			MaxObservationLengthBytes: 1000000,
+			MaxOutcomeLengthBytes:     1000000,
+			MaxReportLengthBytes:      1000000,
+			MaxBatchSize:              1000,
+		},
+		UniqueReports: true,
+	}
+
+	return oracleConfig
+}
+
+func DefaultOCR3_1Config(numWorkers int) *ocr3_1.V3_1OracleConfig {
+	return &ocr3_1.V3_1OracleConfig{
+		DeltaProgressMillis:  5000, // DKG 10-15 seconds; Vault 5 sec // check bandwidth from nops
+		DeltaRoundMillis:     200,
+		DeltaGraceMillis:     0,
+		DeltaStageMillis:     0,
+		MaxRoundsPerEpoch:    10,
+		TransmissionSchedule: []int{numWorkers},
+
+		MaxDurationInitializationMillis:               10000,
+		MaxDurationShouldAcceptAttestedReportMillis:   1000,
+		MaxDurationShouldTransmitAcceptedReportMillis: 1000,
+
+		WarnDurationQueryMillis:               1000,
+		WarnDurationObservationMillis:         1000,
+		WarnDurationValidateObservationMillis: 1000,
+		WarnDurationObservationQuorumMillis:   1000,
+		WarnDurationStateTransition:           1000,
+		WarnDurationCommitted:                 1000,
+
+		MaxFaultyOracles: 1,
+
+		PrevConfigDigest:  "",
+		PrevSeqNr:         0,
+		PrevHistoryDigest: "",
+	}
+}
+
+func DefaultChainCapabilityOCR3Config() *ocr3.OracleConfig {
+	cfg := DefaultOCR3Config()
+
+	cfg.DeltaRoundMillis = 1000
+	const kib = 1024
+	const mib = 1024 * kib
+	cfg.ConsensusCapOffchainConfig = nil
+	cfg.ChainCapOffchainConfig = &ocr3.ChainCapOffchainConfig{
+		MaxQueryLengthBytes:       mib,
+		MaxObservationLengthBytes: 97 * kib,
+		MaxReportLengthBytes:      mib,
+		MaxOutcomeLengthBytes:     mib,
+		MaxReportCount:            1000,
+		MaxBatchSize:              200,
+	}
+	return cfg
+}

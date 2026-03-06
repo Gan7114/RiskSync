@@ -13,6 +13,8 @@ import {StressScenarioRegistry}          from "../src/StressScenarioRegistry.sol
 import {ChainlinkVolatilityOracle}       from "../src/ChainlinkVolatilityOracle.sol";
 import {AutomatedRiskUpdater}            from "../src/AutomatedRiskUpdater.sol";
 import {CrossChainRiskBroadcaster}       from "../src/CrossChainRiskBroadcaster.sol";
+import {AssetRegistry}                   from "../src/AssetRegistry.sol";
+import {MultiAssetRiskRouter}            from "../src/MultiAssetRiskRouter.sol";
 
 /// @title DeploySepolia
 /// @notice Deploys the full DeFiStressOracle system to Ethereum Sepolia testnet.
@@ -49,6 +51,9 @@ contract DeploySepolia is Script {
     address constant ETH_USD_FEED    = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
     address constant AAVE_DATA_PROV  = 0x3e9708d80f7B3e43118013075F7e95CE3AB31F31;
     address constant WETH            = 0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9;
+    address constant WBTC            = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
+    address constant LINK_TOKEN      = 0x779877A7B0D9E8603169DdbD7836e478b4624789;
+    address constant AAVE_TOKEN      = 0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9;
     // Chainlink CCIP Router (Ethereum Sepolia):
     address constant CCIP_ROUTER     = 0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59;
 
@@ -176,9 +181,72 @@ contract DeploySepolia is Script {
         );
         console2.log("URC deployed:         ", address(urc));
 
+        // ── 5.5 AssetRegistry & MultiAssetRiskRouter ──────────────────────────
+        AssetRegistry registry = new AssetRegistry();
+        console2.log("AssetRegistry deployed:       ", address(registry));
+
+        _registerOrDisable(
+            registry,
+            "ETH",
+            WETH,
+            WETH_USDC_POOL,
+            ETH_USD_FEED,
+            18,
+            uint256(_envUintOr("ETH_SHOCK_BPS", 2_000)),
+            COST_THRESHOLD_LOW,
+            COST_THRESHOLD_HIGH
+        );
+        _registerOrDisable(
+            registry,
+            "BTC",
+            _envAddressOr("BTC_ASSET", WBTC),
+            _envAddressOr("BTC_UNI_POOL", address(0)),
+            _envAddressOr("BTC_USD_FEED", address(0)),
+            uint8(_envUintOr("BTC_TOKEN1_DECIMALS", 6)),
+            uint256(_envUintOr("BTC_SHOCK_BPS", 2_000)),
+            COST_THRESHOLD_LOW,
+            COST_THRESHOLD_HIGH
+        );
+        _registerOrDisable(
+            registry,
+            "LINK",
+            _envAddressOr("LINK_ASSET", LINK_TOKEN),
+            _envAddressOr("LINK_UNI_POOL", address(0)),
+            _envAddressOr("LINK_USD_FEED", address(0)),
+            uint8(_envUintOr("LINK_TOKEN1_DECIMALS", 18)),
+            uint256(_envUintOr("LINK_SHOCK_BPS", 2_500)),
+            COST_THRESHOLD_LOW,
+            COST_THRESHOLD_HIGH
+        );
+        _registerOrDisable(
+            registry,
+            "AAVE",
+            _envAddressOr("AAVE_ASSET", AAVE_TOKEN),
+            _envAddressOr("AAVE_UNI_POOL", address(0)),
+            _envAddressOr("AAVE_USD_FEED", address(0)),
+            uint8(_envUintOr("AAVE_TOKEN1_DECIMALS", 18)),
+            uint256(_envUintOr("AAVE_SHOCK_BPS", 2_500)),
+            COST_THRESHOLD_LOW,
+            COST_THRESHOLD_HIGH
+        );
+
+        MultiAssetRiskRouter router = new MultiAssetRiskRouter(
+            address(registry),
+            address(mco),
+            address(tdrv),
+            address(cplcs),
+            address(tco),
+            WEIGHT_MCO,
+            WEIGHT_TDRV,
+            WEIGHT_CPLCS,
+            WEIGHT_TCO
+        );
+        console2.log("MultiAssetRiskRouter deployed:", address(router));
+
         // ── 6. LendingProtocolCircuitBreaker ──────────────────────────────────
         LendingProtocolCircuitBreaker cb = new LendingProtocolCircuitBreaker(
-            address(urc)
+            address(router),
+            WETH
         );
         console2.log("CircuitBreaker deployed:", address(cb));
 
@@ -200,7 +268,8 @@ contract DeploySepolia is Script {
 
         // ── 9. AutomatedRiskUpdater ───────────────────────────────────────────
         AutomatedRiskUpdater aru = new AutomatedRiskUpdater(
-            address(urc),
+            address(router),
+            address(registry),
             address(cb),
             ARU_INTERVAL
         );
@@ -209,7 +278,8 @@ contract DeploySepolia is Script {
         // ── 10. CrossChainRiskBroadcaster ─────────────────────────────────────
         CrossChainRiskBroadcaster ccrb = new CrossChainRiskBroadcaster(
             CCIP_ROUTER,
-            address(urc),
+            address(router),
+            WETH,
             address(cb)
         );
         console2.log("CrossChainBroadcaster deployed:", address(ccrb));
@@ -224,6 +294,8 @@ contract DeploySepolia is Script {
         console2.log("CrossProtocolCascadeScore:     ", address(cplcs));
         console2.log("TickConcentrationOracle:       ", address(tco));
         console2.log("UnifiedRiskCompositor:         ", address(urc));
+        console2.log("AssetRegistry:                 ", address(registry));
+        console2.log("MultiAssetRiskRouter:          ", address(router));
         console2.log("LendingProtocolCircuitBreaker: ", address(cb));
         console2.log("StressScenarioRegistry:        ", address(ssr));
         console2.log("ChainlinkVolatilityOracle:     ", address(cvo));
@@ -246,5 +318,58 @@ contract DeploySepolia is Script {
         console2.log("  2. Register ARU with Chainlink Automation on Sepolia");
         console2.log("  3. Fund CCRB with LINK for CCIP broadcasts");
         console2.log("  4. cd dashboard && vercel --prod");
+    }
+
+    function _registerOrDisable(
+        AssetRegistry registry,
+        string memory label,
+        address asset,
+        address pool,
+        address feed,
+        uint8 token1Decimals,
+        uint256 shockBps,
+        uint256 mcoLow,
+        uint256 mcoHigh
+    ) internal {
+        bool enabled = _isLiveInfra(pool) && _isLiveInfra(feed);
+
+        registry.addAssetConfig(
+            AssetRegistry.AssetConfig({
+                asset: asset,
+                pool: pool,
+                feed: feed,
+                token1Decimals: token1Decimals,
+                shockBps: shockBps,
+                mcoThresholdLow: mcoLow,
+                mcoThresholdHigh: mcoHigh,
+                enabled: enabled
+            })
+        );
+
+        if (enabled) {
+            console2.log("Asset enabled:", label);
+        } else {
+            console2.log("Asset disabled (missing infra):", label);
+        }
+    }
+
+    function _isLiveInfra(address target) internal view returns (bool) {
+        return target != address(0) && target.code.length > 0;
+    }
+
+    function _envAddressOr(string memory key, address fallbackValue) internal view returns (address value) {
+        try vm.envAddress(key) returns (address fromEnv) {
+            return fromEnv;
+        } catch {
+            return fallbackValue;
+        }
+    }
+
+    function _envUintOr(string memory key, uint256 fallbackValue) internal view returns (uint256 value) {
+        try vm.envUint(key) returns (uint256 fromEnv) {
+            return fromEnv;
+        } catch {
+            return fallbackValue;
+        }
     }
 }

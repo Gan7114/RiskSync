@@ -29,8 +29,8 @@ contract RegisterUpkeep is Script {
     address constant LINK_TOKEN = 0x779877A7B0D9E8603169DdbD7836e478b4624789;
     address constant REGISTRAR = 0xb0E49c5D0d05cbc241d68c05BC5BA1d1B7B72976;
 
-    // The deployed AutomatedRiskUpdater
-    address constant ARU = 0xd3DD2704AE928e130825b4db9C0e862419e7aB40;
+    // The deployed AutomatedRiskUpdater (Sepolia deployment 2026-03-06)
+    address constant ARU = 0x473779900D540F0098D4EDf40bD3b94a36f8731C;
 
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");

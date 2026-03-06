@@ -51,12 +51,17 @@ interface IRiskConsumer {
 }
 
 /// @title IRiskScoreProvider
-/// @notice Interface that the UnifiedRiskCompositor exposes to IRiskConsumers.
-///         Allows consumers to query the current risk state without triggering an update.
+/// @notice Interface that the risk aggregators expose to IRiskConsumers.
 interface IRiskScoreProvider {
-    /// @notice Returns the most recently computed composite score (0-100).
+    /// @notice Backward compatibility for single-asset compositor.
     function getRiskScore() external view returns (uint256);
+    
+    /// @notice Returns the most recently computed composite score (0-100) for a specific asset.
+    function getRiskScore(address asset) external view returns (uint256);
 
     /// @notice Returns the timestamp of the last score update.
     function lastUpdatedAt() external view returns (uint256);
+
+    /// @notice Returns the timestamp of the last score update for a specific asset.
+    function lastUpdatedAt(address asset) external view returns (uint256);
 }

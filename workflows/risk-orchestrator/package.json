@@ -4,8 +4,9 @@
     "description": "Chainlink CRE workflow for DeFiStressOracle composite risk alerts",
     "main": "index.ts",
     "scripts": {
-        "compile": "npx cre-compile-workflow index.ts",
-        "compile:bun": "bun x cre-compile-workflow index.ts"
+        "setup": "PATH=\"$HOME/.bun/bin:$PATH\" ${BUN_BIN:-$HOME/.bun/bin/bun} ./node_modules/@chainlink/cre-sdk-javy-plugin/bin/setup.ts",
+        "compile": "PATH=\"$HOME/.bun/bin:$PATH\" ${BUN_BIN:-$HOME/.bun/bin/bun} ./node_modules/@chainlink/cre-sdk/bin/cre-compile.ts index.ts risk-orchestrator.wasm",
+        "simulate": "PATH=\"$HOME/.bun/bin:$PATH\" cre workflow simulate ./workflows/risk-orchestrator -T staging-settings --non-interactive --trigger-index 0"
     },
     "dependencies": {
         "@chainlink/cre-sdk": "^1.1.3",

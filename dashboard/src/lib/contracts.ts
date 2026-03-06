@@ -1,6 +1,10 @@
 // Contract addresses — set via environment variables after deployment.
 // If an address is empty the dashboard runs in simulation mode.
 export const ADDRESSES = {
+  ASSET_REGISTRY:  process.env.NEXT_PUBLIC_ASSET_REGISTRY_ADDRESS ?? "",
+  MULTI_ASSET_ROUTER: process.env.NEXT_PUBLIC_MULTI_ASSET_ROUTER_ADDRESS ?? "",
+  ARU:             process.env.NEXT_PUBLIC_ARU_ADDRESS ?? "",
+  CCRB:            process.env.NEXT_PUBLIC_CCRB_ADDRESS ?? "",
   URC:             process.env.NEXT_PUBLIC_URC_ADDRESS ?? "",
   MCO:             process.env.NEXT_PUBLIC_MCO_ADDRESS ?? "",
   TDRV:            process.env.NEXT_PUBLIC_TDRV_ADDRESS ?? "",
@@ -19,5 +23,11 @@ export const RPC_URL =
   "https://rpc.sepolia.org";
 
 export function isLive(): boolean {
-  return Boolean(ADDRESSES.URC && ADDRESSES.MCO);
+  const multiAssetLive = Boolean(ADDRESSES.ASSET_REGISTRY && ADDRESSES.MULTI_ASSET_ROUTER && ADDRESSES.MCO);
+  const legacyLive = Boolean(ADDRESSES.URC && ADDRESSES.MCO);
+  return multiAssetLive || legacyLive;
+}
+
+export function isMultiAssetLive(): boolean {
+  return Boolean(ADDRESSES.ASSET_REGISTRY && ADDRESSES.MULTI_ASSET_ROUTER);
 }

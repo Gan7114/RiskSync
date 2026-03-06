@@ -272,6 +272,7 @@ export function generateSnapshot(asset: string = "ETH"): OracleSnapshot {
       oldestRoundAgeHours: 24,
       lastUpkeepTimestamp: _lastUpkeepTs,
       nextUpkeepIn,
+      upkeepIntervalSeconds: 300,
       upkeepCount: _upkeepCount,
       ccipBroadcasts: _ccipBroadcasts,
       destinationCount: 3,
@@ -282,5 +283,68 @@ export function generateSnapshot(asset: string = "ETH"): OracleSnapshot {
     timestamp: Date.now(),
     tick: _tick,
     asset,
+    assetAddress: asset,
+    assetEnabled: true,
+    assetConfigured: true,
+    assetStatusNote: "SIMULATION",
+  };
+}
+
+export function generateDisabledSnapshot(
+  asset: string,
+  assetAddress: string,
+  configured: boolean,
+  note: string
+): OracleSnapshot {
+  const base = generateSnapshot(asset);
+  const disabledAlert: AlertLevel = 1;
+  return {
+    ...base,
+    compositeScore: 0,
+    alertLevel: disabledAlert,
+    riskTier: "LOW",
+    ltvBps: 0,
+    ewmaScore: 0,
+    momentum: "STABLE",
+    scoreHistory: [0, 0, 0, 0, 0, 0, 0, 0],
+    mco: {
+      score: 0,
+      costUsd: 0,
+      borrowRateBps: 0,
+    },
+    tdrv: {
+      score: 0,
+      volBps: 0,
+      regime: "CALM",
+      ewmaVol: 0,
+    },
+    cplcs: {
+      score: 0,
+      totalCollateralUsd: 0,
+      amplificationBps: 10_000,
+      estimatedLiquidationUsd: 0,
+    },
+    tco: {
+      score: 0,
+      hhiBps: 0,
+      entropyBits: 0,
+      biasBps: 0,
+    },
+    circuitBreaker: {
+      isInCooldown: false,
+      cooldownSecondsLeft: 0,
+      alertLevel: disabledAlert,
+    },
+    chainlink: {
+      ...base.chainlink,
+      feedDescription: `${asset} / USD`,
+      cvoVolBps: 0,
+      cvoRegime: "CALM",
+    },
+    asset,
+    assetAddress,
+    assetEnabled: false,
+    assetConfigured: configured,
+    assetStatusNote: note,
   };
 }

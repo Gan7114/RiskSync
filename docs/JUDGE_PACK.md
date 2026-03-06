@@ -10,7 +10,7 @@ npm --prefix dashboard install        # Dashboard dependencies
 
 # 2. Run all unit tests (no RPC needed)
 forge test --no-match-path "test/foundry/ForkTests.t.sol"
-# ✅ Expected: 184 tests, 0 failures across 15 suites
+# ✅ Expected: 192 tests, 0 failures across 18 suites
 
 # 3. Build dashboard
 npm --prefix dashboard run build
@@ -27,16 +27,37 @@ cd dashboard && npm run dev   # opens http://localhost:3000
 
 | Contract | Address | Etherscan |
 |---|---|---|
-| ManipulationCostOracle (MCO) | `0xB3C34601FA06E78afe459C0c16D49449d575669B` | [view](https://sepolia.etherscan.io/address/0xB3C34601FA06E78afe459C0c16D49449d575669B) |
-| TickDerivedRealizedVolatility (TDRV) | `0x2DFc934b215C2D1ceCA838e7b53CFCae08877Ccf` | [view](https://sepolia.etherscan.io/address/0x2DFc934b215C2D1ceCA838e7b53CFCae08877Ccf) |
-| CrossProtocolCascadeScore (CPLCS) | `0xD34314722A972925F4A2D5fFf0752aBbD8F39675` | [view](https://sepolia.etherscan.io/address/0xD34314722A972925F4A2D5fFf0752aBbD8F39675) |
-| TickConcentrationOracle (TCO) | `0xeCF62d406025b06b9FC44198235C30EFde62a3e9` | [view](https://sepolia.etherscan.io/address/0xeCF62d406025b06b9FC44198235C30EFde62a3e9) |
-| UnifiedRiskCompositor (URC) | `0x191A27Eae07712410A0f37FFd4477B82412AA31e` | [view](https://sepolia.etherscan.io/address/0x191A27Eae07712410A0f37FFd4477B82412AA31e) |
-| LendingProtocolCircuitBreaker | `0x3b2859D5c62F78146836Bb47a76e1556cfdEfC3c` | [view](https://sepolia.etherscan.io/address/0x3b2859D5c62F78146836Bb47a76e1556cfdEfC3c) |
-| StressScenarioRegistry | `0xA1C034E51Db8d80A50dB9e096638950ceABCE666` | [view](https://sepolia.etherscan.io/address/0xA1C034E51Db8d80A50dB9e096638950ceABCE666) |
-| ChainlinkVolatilityOracle (CVO) | `0x9b27152bE4ddc75C1ad7614BD18858D5966B9E8F` | [view](https://sepolia.etherscan.io/address/0x9b27152bE4ddc75C1ad7614BD18858D5966B9E8F) |
-| AutomatedRiskUpdater | `0xd3DD2704AE928e130825b4db9C0e862419e7aB40` | [view](https://sepolia.etherscan.io/address/0xd3DD2704AE928e130825b4db9C0e862419e7aB40) |
-| CrossChainRiskBroadcaster | `0x7639A986bC26012216A57Ea1E53aF14B26E70077` | [view](https://sepolia.etherscan.io/address/0x7639A986bC26012216A57Ea1E53aF14B26E70077) |
+| ManipulationCostOracle (MCO) | `0xf410d4450A98cB1304e7F5B529EBcd30801b771C` | [view](https://sepolia.etherscan.io/address/0xf410d4450A98cB1304e7F5B529EBcd30801b771C) |
+| TickDerivedRealizedVolatility (TDRV) | `0x25Ec7B78DaaB44137121ceD05FAcc07A2dFB0570` | [view](https://sepolia.etherscan.io/address/0x25Ec7B78DaaB44137121ceD05FAcc07A2dFB0570) |
+| CrossProtocolCascadeScore (CPLCS) | `0x075D2961682F72C4fbf6d43FBF6a34bf7BBc0B72` | [view](https://sepolia.etherscan.io/address/0x075D2961682F72C4fbf6d43FBF6a34bf7BBc0B72) |
+| TickConcentrationOracle (TCO) | `0x54F4050Dc6e61611F99FC8F4C85b081f7aa6749C` | [view](https://sepolia.etherscan.io/address/0x54F4050Dc6e61611F99FC8F4C85b081f7aa6749C) |
+| UnifiedRiskCompositor (URC) | `0x153D2bc4bdDdB1b6b54f127e718bdE004d75AB44` | [view](https://sepolia.etherscan.io/address/0x153D2bc4bdDdB1b6b54f127e718bdE004d75AB44) |
+| LendingProtocolCircuitBreaker | `0x297A1BccC9F1578B4c3fA2701fCf6Ad8a41E1fEa` | [view](https://sepolia.etherscan.io/address/0x297A1BccC9F1578B4c3fA2701fCf6Ad8a41E1fEa) |
+| StressScenarioRegistry | `0xb7Ac84503e02a95ae06494FF44594139dAAE51dC` | [view](https://sepolia.etherscan.io/address/0xb7Ac84503e02a95ae06494FF44594139dAAE51dC) |
+| ChainlinkVolatilityOracle (CVO) | `0x2DD8064f972168d3eEadedb90BbBd4B49DaC046c` | [view](https://sepolia.etherscan.io/address/0x2DD8064f972168d3eEadedb90BbBd4B49DaC046c) |
+| AssetRegistry | `0xAc8509a209eF27BD92A43C31F33705e1c30376d8` | [view](https://sepolia.etherscan.io/address/0xAc8509a209eF27BD92A43C31F33705e1c30376d8) |
+| MultiAssetRiskRouter | `0x6BF3B6DfB0884A45a54140D38513F991Cf633721` | [view](https://sepolia.etherscan.io/address/0x6BF3B6DfB0884A45a54140D38513F991Cf633721) |
+| AutomatedRiskUpdater | `0x473779900D540F0098D4EDf40bD3b94a36f8731C` | [view](https://sepolia.etherscan.io/address/0x473779900D540F0098D4EDf40bD3b94a36f8731C) |
+| CrossChainRiskBroadcaster | `0xFd51A5E98355dC874Bf75EA6ED36Ae159810bFBE` | [view](https://sepolia.etherscan.io/address/0xFd51A5E98355dC874Bf75EA6ED36Ae159810bFBE) |
+
+### Multi-Asset Upgrade Contracts
+
+`AssetRegistry` and `MultiAssetRiskRouter` are now part of the deployment scripts (`Deploy.s.sol`, `DeploySepolia.s.sol`).
+After running the upgraded scripts, set:
+
+- `ASSET_REGISTRY=<deployed registry address>`
+- `MULTI_ASSET_ROUTER=<deployed router address>`
+
+and run the verification commands below.
+
+### Configured Asset Reality (Script Defaults)
+
+| Network | ETH | BTC | LINK | AAVE |
+|---|---|---|---|---|
+| Mainnet deploy script | Enabled by default | Disabled unless `BTC_UNI_POOL` is provided | Disabled unless `LINK_UNI_POOL` is provided | Disabled unless `AAVE_UNI_POOL` is provided |
+| Sepolia deploy script | Enabled by default | Disabled unless env pool+feed exist | Disabled unless env pool+feed exist | Disabled unless env pool+feed exist |
+
+Disabled assets are explicitly marked disabled in registry and dashboard (never shown as fake live).
 
 ---
 
@@ -49,7 +70,7 @@ cd dashboard && npm run dev   # opens http://localhost:3000
 - **Test files**: `CVO*` tests in [`NovelSystem.t.sol`](../test/foundry/NovelSystem.t.sol)
 
 ```shell
-cast call 0x9b27152bE4ddc75C1ad7614BD18858D5966B9E8F \
+cast call 0x2DD8064f972168d3eEadedb90BbBd4B49DaC046c \
   "getPriceFeedDetails()(string,uint8,uint256,uint80)" \
   --rpc-url $SEPOLIA_RPC_URL
 ```
@@ -58,12 +79,12 @@ cast call 0x9b27152bE4ddc75C1ad7614BD18858D5966B9E8F \
 - **Contract**: [`AutomatedRiskUpdater.sol`](../src/AutomatedRiskUpdater.sol)
 - **Implements**: `AutomationCompatibleInterface` (`checkUpkeep` + `performUpkeep`)
 - **Verification**: Call `checkUpkeep("")` — returns `(bool upkeepNeeded, bytes)`.
-- **Live Proof**: Actively registered on Chainlink Automation with **Upkeep ID**: `43299524312024280719987296485661783062184338223244119633145042715674688313470`
+- **Live Proof**: Actively registered on Chainlink Automation with **Upkeep ID**: `55979398141976704248916940835648987232607128922315091009692569738181087735824`
 
 ```shell
-cast call 0xd3DD2704AE928e130825b4db9C0e862419e7aB40 \
+cast call 0x473779900D540F0098D4EDf40bD3b94a36f8731C \
   "checkUpkeep(bytes)(bool,bytes)" \
-  0x00 \
+  0x \
   --rpc-url $SEPOLIA_RPC_URL
 ```
 
@@ -72,10 +93,10 @@ cast call 0xd3DD2704AE928e130825b4db9C0e862419e7aB40 \
 - **Inherits**: `CCIPReceiver`, calls `IRouterClient.ccipSend()`
 - **Router**: `0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59` (Sepolia)
 - **Verification**: Call `estimateFee(chainSelector)` to confirm router integration.
-- **Live Proof**: A successful cross-chain `broadcastToAll` call to Base Sepolia was executed in Tx **[0xe2ab53e3cfd9ed10c6d0b4db3b6a2a984259677e9e956a9d97074f2fb4031724](https://ccip.chain.link/msg/0xe2ab53e3cfd9ed10c6d0b4db3b6a2a984259677e9e956a9d97074f2fb4031724)**.
+- **Live Proof**: A successful cross-chain message was executed from the upgraded broadcaster: **[0x214808a8a6990228fb270ccb83ab45d37ddf3b58f3044a6d250889a61528209e](https://ccip.chain.link/msg/0x214808a8a6990228fb270ccb83ab45d37ddf3b58f3044a6d250889a61528209e)**.
 
 ```shell
-cast call 0x7639A986bC26012216A57Ea1E53aF14B26E70077 \
+cast call 0xFd51A5E98355dC874Bf75EA6ED36Ae159810bFBE \
   "estimateFee(uint64)(uint256)" \
   10344971235874465080 \
   --rpc-url $SEPOLIA_RPC_URL
@@ -84,28 +105,53 @@ cast call 0x7639A986bC26012216A57Ea1E53aF14B26E70077 \
 ### ✅ 4. Chainlink CRE Workflow
 - **Location**: [`workflows/risk-orchestrator/index.ts`](../workflows/risk-orchestrator/index.ts)
 - **Config**: [`workflows/risk-orchestrator/config.json`](../workflows/risk-orchestrator/config.json)
-- **What it does**: Reads composite risk score from URC on-chain, fetches ETH 24h volatility from CoinGecko API, emits alerts when combined risk exceeds thresholds.
-- **Compile**:
+- **What it does**: Reads enabled assets from `AssetRegistry`, reads per-asset risk from `MultiAssetRiskRouter`, fetches per-asset 24h volatility from CoinGecko, computes severity/action, and estimates CCIP fee for alert routing.
+- **Build + simulate**:
 ```shell
 cd workflows/risk-orchestrator
 npm install
+npm run setup
 npm run compile
+PATH="$HOME/.bun/bin:$PATH" \
+cre workflow simulate ./workflows/risk-orchestrator -T staging-settings --non-interactive --trigger-index 0
 ```
 
 ---
 
 ## Exact Verification Commands
 
+### Verify multi-asset registry + router
+
+```shell
+cast call $ASSET_REGISTRY \
+  "getSupportedAssets()(address[])" \
+  --rpc-url $SEPOLIA_RPC_URL
+
+cast call $ASSET_REGISTRY \
+  "getEnabledAssets()(address[])" \
+  --rpc-url $SEPOLIA_RPC_URL
+
+cast call $ASSET_REGISTRY \
+  "getConfig(address)((address,address,address,uint8,uint256,uint256,uint256,bool))" \
+  $ASSET_ADDRESS \
+  --rpc-url $SEPOLIA_RPC_URL
+
+cast call $MULTI_ASSET_ROUTER \
+  "assetRiskState(address)(uint256,uint256,uint256,uint256,uint256,uint8,uint256,uint256,uint256,uint256,uint256)" \
+  $ASSET_ADDRESS \
+  --rpc-url $SEPOLIA_RPC_URL
+```
+
 ### Read current composite risk score
 ```shell
-cast call 0x191A27Eae07712410A0f37FFd4477B82412AA31e \
+cast call 0x153D2bc4bdDdB1b6b54f127e718bdE004d75AB44 \
   "getRiskScore()(uint256)" \
   --rpc-url $SEPOLIA_RPC_URL
 ```
 
 ### Read full risk breakdown
 ```shell
-cast call 0x191A27Eae07712410A0f37FFd4477B82412AA31e \
+cast call 0x153D2bc4bdDdB1b6b54f127e718bdE004d75AB44 \
   "getRiskBreakdown()(uint256,uint256,uint256,uint256,uint8,uint256,uint256,uint256,uint256)" \
   --rpc-url $SEPOLIA_RPC_URL
 ```
@@ -113,7 +159,7 @@ Returns: `compositeScore, mcoInput, tdrvInput, cpInput, tier, recommendedLtv, re
 
 ### Read manipulation attack cost (ETH/USDC, 2% deviation)
 ```shell
-cast call 0xB3C34601FA06E78afe459C0c16D49449d575669B \
+cast call 0xf410d4450A98cB1304e7F5B529EBcd30801b771C \
   "getManipulationCost(uint256)(uint256,uint256)" \
   200 \
   --rpc-url $SEPOLIA_RPC_URL

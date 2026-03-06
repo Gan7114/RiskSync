@@ -1,10 +1,40 @@
 {
     "evm": {
-        "chainSelectorName": "ethereum-sepolia",
-        "urcAddress": "0x191A27Eae07712410A0f37FFd4477B82412AA31e",
-        "wethAddress": "0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9"
+        "chainSelectorName": "ethereum-testnet-sepolia",
+        "assetRegistryAddress": "0xAc8509a209eF27BD92A43C31F33705e1c30376d8",
+        "multiAssetRouterAddress": "0x6BF3B6DfB0884A45a54140D38513F991Cf633721",
+        "circuitBreakerAddress": "0x297A1BccC9F1578B4c3fA2701fCf6Ad8a41E1fEa",
+        "ccrbAddress": "0xFd51A5E98355dC874Bf75EA6ED36Ae159810bFBE",
+        "ccipDestinationSelector": "10344971235874465080"
     },
     "api": {
-        "priceUrl": "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&include_24hr_change=true"
-    }
+        "priceUrlTemplate": "https://api.coingecko.com/api/v3/simple/price?ids={id}&vs_currencies=usd&include_24hr_change=true"
+    },
+    "thresholds": {
+        "warningScore": 50,
+        "emergencyScore": 80,
+        "volatilityPct": 5
+    },
+    "assets": [
+        {
+            "symbol": "ETH",
+            "address": "0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9",
+            "coingeckoId": "ethereum"
+        },
+        {
+            "symbol": "BTC",
+            "address": "0x517f2982701695D4E52f1ECFBEf3ba31Df470161",
+            "coingeckoId": "bitcoin"
+        },
+        {
+            "symbol": "LINK",
+            "address": "0x779877A7B0D9E8603169DdbD7836e478b4624789",
+            "coingeckoId": "chainlink"
+        },
+        {
+            "symbol": "AAVE",
+            "address": "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+            "coingeckoId": "aave"
+        }
+    ]
 }

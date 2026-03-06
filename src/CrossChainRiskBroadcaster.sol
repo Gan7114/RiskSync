@@ -46,10 +46,20 @@ import {Client}         from "@chainlink/contracts-ccip/libraries/Client.sol";
 //
 // ============================================================================
 
-interface ICompositorForCCIP {
-    function getRiskScore()      external view returns (uint256);
-    function getRiskTier()       external view returns (uint8);
-    function getRecommendedLtv() external view returns (uint256);
+interface IMultiAssetRouterForCCIP {
+    function assetRiskState(address asset) external view returns (
+        uint256 compositeScore,
+        uint256 mcoInput,
+        uint256 tdrvInput,
+        uint256 cpInput,
+        uint256 tcoInput,
+        uint8 tier,
+        uint256 recommendedLtvBps,
+        uint256 realizedVolBps,
+        uint256 manipulationCostUsd,
+        uint256 ewmaScore,
+        uint256 lastUpdatedAt
+    );
 }
 
 interface ICircuitBreakerForCCIP {
@@ -102,11 +112,22 @@ contract CrossChainRiskBroadcaster is CCIPReceiver {
     event DestinationRemoved(uint64 chainSelector);
 
     // =========================================================================
+    // Errors
+    // =========================================================================
+
+    error InvalidConfig();
+
+    // =========================================================================
     // State
     // =========================================================================
 
-    ICompositorForCCIP   public immutable compositor;
+    IMultiAssetRouterForCCIP public immutable router;
+
+    /// @notice Address of the LendingProtocolCircuitBreaker to read alert level.
     ICircuitBreakerForCCIP public immutable circuitBreaker;
+
+    /// @notice The asset being tracked for broadcast payload.
+    address public immutable trackedAsset;
     address              public immutable owner;
 
     /// @notice Minimum alert level that triggers a cross-chain broadcast.
@@ -130,18 +151,19 @@ contract CrossChainRiskBroadcaster is CCIPReceiver {
     // =========================================================================
 
     /// @param _ccipRouter      Chainlink CCIP Router on this chain
-    /// @param _compositor      UnifiedRiskCompositor address
-    /// @param _circuitBreaker  RiskCircuitBreaker address
+    /// @param _router     Address of the MultiAssetRiskRouter.
+    /// @param _trackedAsset Address of the specific asset to broadcast.
+    /// @param _breaker    Address of the local CircuitBreaker.
     constructor(
         address _ccipRouter,
-        address _compositor,
-        address _circuitBreaker
+        address _router,
+        address _trackedAsset,
+        address _breaker
     ) CCIPReceiver(_ccipRouter) {
-        require(_compositor     != address(0), "CCRB: zero compositor");
-        require(_circuitBreaker != address(0), "CCRB: zero circuit breaker");
-
-        compositor        = ICompositorForCCIP(_compositor);
-        circuitBreaker    = ICircuitBreakerForCCIP(_circuitBreaker);
+        if (_router == address(0) || _trackedAsset == address(0) || _breaker == address(0)) revert InvalidConfig();
+        router = IMultiAssetRouterForCCIP(_router);
+        trackedAsset = _trackedAsset;
+        circuitBreaker = ICircuitBreakerForCCIP(_breaker);
         owner             = msg.sender;
         broadcastThreshold = 2; // WARNING level
     }
@@ -158,7 +180,7 @@ contract CrossChainRiskBroadcaster is CCIPReceiver {
         uint8 alertLevel = circuitBreaker.currentLevel();
         require(alertLevel >= broadcastThreshold, "CCRB: below threshold");
 
-        RiskPayload memory payload = _currentPayload(alertLevel);
+        RiskPayload memory payload = _buildPayload();
         uint256 remaining = msg.value;
 
         for (uint256 i = 0; i < destinations.length; i++) {
@@ -195,7 +217,7 @@ contract CrossChainRiskBroadcaster is CCIPReceiver {
         Destination memory dest = destinations[idx - 1];
         require(dest.active, "CCRB: destination inactive");
 
-        RiskPayload memory payload = _currentPayload(circuitBreaker.currentLevel());
+        RiskPayload memory payload = _buildPayload();
         uint256 fee = _estimateFee(destChainSelector, payload);
         require(msg.value >= fee, "CCRB: insufficient ETH");
 
@@ -213,7 +235,7 @@ contract CrossChainRiskBroadcaster is CCIPReceiver {
 
     /// @notice Estimate the CCIP fee (in ETH) to broadcast to a destination.
     function estimateFee(uint64 destChainSelector) external view returns (uint256 fee) {
-        RiskPayload memory payload = _currentPayload(0);
+        RiskPayload memory payload = _buildPayload();
         return _estimateFee(destChainSelector, payload);
     }
 
@@ -288,13 +310,27 @@ contract CrossChainRiskBroadcaster is CCIPReceiver {
     // Internal Helpers
     // =========================================================================
 
-    function _currentPayload(uint8 alertLevel) internal view returns (RiskPayload memory) {
+    function _buildPayload() internal view returns (RiskPayload memory) {
+        (
+            uint256 score,
+            , // mcoInput
+            , // tdrvInput
+            , // cpInput
+            , // tcoInput
+            , // tier
+            uint256 ltv,
+            , // realizedVolBps
+            , // manipulationCostUsd
+            , // ewmaScore
+              // lastUpdatedAt
+        ) = router.assetRiskState(trackedAsset);
+
         return RiskPayload({
-            compositeScore:  compositor.getRiskScore(),
-            alertLevel:      alertLevel,
-            ltvBps:          compositor.getRecommendedLtv(),
-            timestamp:       block.timestamp,
-            sourceContract:  address(this)
+            compositeScore: score,
+            alertLevel: circuitBreaker.currentLevel(),
+            ltvBps: ltv,
+            timestamp: block.timestamp,
+            sourceContract: address(this)
         });
     }
 

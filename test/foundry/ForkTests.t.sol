@@ -310,7 +310,7 @@ contract ForkTests is Test {
     /// @notice Deploy LendingProtocolCircuitBreaker with URC; initial state is NOMINAL.
     function test_fork_cb_initialState() public {
         LendingProtocolCircuitBreaker cb =
-            new LendingProtocolCircuitBreaker(address(urc));
+            new LendingProtocolCircuitBreaker(address(urc), WETH);
         assertEq(
             uint256(cb.currentLevel()),
             uint256(RiskCircuitBreaker.AlertLevel.NOMINAL),

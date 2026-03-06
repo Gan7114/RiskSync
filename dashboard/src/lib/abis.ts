@@ -7,8 +7,36 @@ export const URC_ABI = [
   "function isTcoEnabled() view returns (bool)",
 ];
 
+export const ASSET_REGISTRY_ABI = [
+  "function getSupportedAssets() view returns (address[] memory)",
+  "function getEnabledAssets() view returns (address[] memory)",
+  "function getConfig(address asset) view returns ((address asset, address pool, address feed, uint8 token1Decimals, uint256 shockBps, uint256 mcoThresholdLow, uint256 mcoThresholdHigh, bool enabled))",
+];
+
+export const MULTI_ASSET_ROUTER_ABI = [
+  "function assetRiskState(address asset) view returns (uint256 score, uint256 mcoInput, uint256 tdrvInput, uint256 cpInput, uint256 tcoInput, uint8 tier, uint256 recommendedLtv, uint256 realizedVolBps, uint256 manipulationCostUsd, uint256 ewmaScore, uint256 updatedAt)",
+  "function getRiskScore(address asset) view returns (uint256)",
+  "function getRiskScore() view returns (uint256)",
+  "function lastUpdatedAt(address asset) view returns (uint256)",
+];
+
+export const ARU_ABI = [
+  "function upkeepCount() view returns (uint256)",
+  "function lastUpkeepTimestamp() view returns (uint256)",
+  "function updateIntervalSeconds() view returns (uint256)",
+  "function secondsUntilNextUpkeep() view returns (uint256)",
+];
+
+export const CCRB_ABI = [
+  "function broadcastCount() view returns (uint256)",
+  "function destinationCount() view returns (uint256)",
+  "function broadcastThreshold() view returns (uint8)",
+];
+
 export const MCO_ABI = [
   "function getManipulationCost(uint256 targetDeviationBps) view returns (uint256 costUsd, uint256 securityScore)",
+  "function getManipulationCostForPool(address pool, address feed, uint256 targetDeviationBps, uint8 token1Decimals) view returns (uint256 costUsd, uint256 securityScore)",
+  "function getManipulationCostForPoolWithDecimals(address pool, address feed, uint256 targetDeviationBps, uint8 token1Decimals) view returns (uint256 costUsd, uint256 securityScore)",
   "function getManipulationCostNormalized(uint256 targetDeviationBps) view returns (uint256 normalizedCostUsd, uint256 securityScore, bool capped)",
   "function getManipulationCostBreakdown(uint256 targetDeviationBps) view returns (uint256 rawCostUsd, uint256 normalizedCostUsd, uint256 securityScore, bool capped)",
   "function getEffectiveBorrowRateBps() view returns (uint256)",
@@ -29,7 +57,9 @@ export const CPLCS_ABI = [
 
 export const TCO_ABI = [
   "function getConcentrationScore() view returns (uint256)",
+  "function getConcentrationScoreForPool(address pool, uint32 windowSeconds, uint8 numSamples) view returns (uint256)",
   "function getConcentrationBreakdown() view returns (uint256 hhiBps, uint256 uniqueBuckets, uint256 directionalBiasBps, uint256 approximateEntropyBits, uint256 concentrationScore)",
+  "function getConcentrationBreakdownForPool(address pool, uint32 windowSeconds, uint8 numSamples) view returns (uint256 hhiBps, uint256 uniqueBuckets, uint256 directionalBiasBps, uint256 approximateEntropyBits, uint256 concentrationScore)",
   "function getHHI() view returns (uint256 hhiBps, uint256 uniqueBuckets)",
   "function getApproximateEntropyBits() view returns (uint256 entropyBits)",
   "function getDirectionalBias() view returns (uint256 biasBps)",

@@ -1,0 +1,19 @@
+staging-settings:
+  account:
+    workflow-owner-address: "0x3Df3a0005882C04FF01923Fb30318235e4A2021D"
+  user-workflow:
+    workflow-name: "defistressoracle-risk-orchestrator-staging"
+  workflow-artifacts:
+    workflow-path: "./index.ts"
+    config-path: "./config.json"
+    secrets-path: ""
+
+production-settings:
+  account:
+    workflow-owner-address: "0x3Df3a0005882C04FF01923Fb30318235e4A2021D"
+  user-workflow:
+    workflow-name: "defistressoracle-risk-orchestrator-production"
+  workflow-artifacts:
+    workflow-path: "./index.ts"
+    config-path: "./config.json"
+    secrets-path: ""

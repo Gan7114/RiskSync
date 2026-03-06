@@ -6,11 +6,11 @@ test = "test/foundry"
 via_ir = true
 optimizer = true
 remappings = [
-    "@chainlink/contracts-ccip/=node_modules/@chainlink/contracts-ccip/contracts/",
-    "@chainlink/contracts/=node_modules/@chainlink/contracts/",
-    "@openzeppelin/contracts@5.0.2/=node_modules/@openzeppelin/contracts-5.0.2/",
-    "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
-    "@openzeppelin/=node_modules/@openzeppelin/",
+    "@chainlink/contracts-ccip/=lib/ccip/contracts/src/v0.8/ccip/",
+    "@chainlink/contracts/=lib/chainlink-brownie-contracts/contracts/",
+    "@openzeppelin/contracts@5.0.2/=lib/openzeppelin-contracts/contracts/",
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "@openzeppelin/=lib/openzeppelin-contracts/",
     "forge-std/=lib/forge-std/src/"
 ]
 

@@ -53,6 +53,9 @@ abstract contract RiskCircuitBreaker is IRiskConsumer {
     /// @notice The UnifiedRiskCompositor this breaker reads scores from.
     IRiskScoreProvider public immutable compositor;
 
+    /// @notice The asset this circuit breaker protects.
+    address public immutable trackedAsset;
+
     /// @notice Threshold and cooldown configuration (immutable post-construction).
     CircuitBreakerConfig public config;
 
@@ -72,6 +75,7 @@ abstract contract RiskCircuitBreaker is IRiskConsumer {
     error CooldownActive(uint256 unlocksAt);
     error InvalidConfig();
     error ZeroCompositor();
+    error ZeroTrackedAsset();
 
     // =========================================================================
     // Events
@@ -92,8 +96,10 @@ abstract contract RiskCircuitBreaker is IRiskConsumer {
     // Constructor
     // =========================================================================
 
-    constructor(address _compositor, CircuitBreakerConfig memory _config) {
+    constructor(address _compositor, address _trackedAsset, CircuitBreakerConfig memory _config) {
         if (_compositor == address(0)) revert ZeroCompositor();
+        if (_trackedAsset == address(0)) revert ZeroCompositor();
+        if (_trackedAsset == address(0)) revert ZeroTrackedAsset();
         if (
             _config.watchThreshold == 0
                 || _config.warningThreshold <= _config.watchThreshold
@@ -103,6 +109,7 @@ abstract contract RiskCircuitBreaker is IRiskConsumer {
         ) revert InvalidConfig();
 
         compositor = IRiskScoreProvider(_compositor);
+        trackedAsset = _trackedAsset;
         config = _config;
         currentLevel = AlertLevel.NOMINAL;
     }
@@ -124,15 +131,21 @@ abstract contract RiskCircuitBreaker is IRiskConsumer {
     /// @dev Permissionless — any EOA, keeper, or automation network can call this.
     /// @return levelChanged True if the alert level changed during this call.
     function checkAndRespond() public returns (bool levelChanged) {
-        uint256 cooldownEnd = lastTriggerTime + config.cooldownSeconds;
-        if (block.timestamp < cooldownEnd) revert CooldownActive(cooldownEnd);
+        if (isInCooldown()) revert CooldownActive(lastTriggerTime + config.cooldownSeconds);
 
-        uint256 score = compositor.getRiskScore();
+        // Explicit try-catch wrapping around getRiskScore(asset) vs getRiskScore()
+        uint256 score;
+        try compositor.getRiskScore(trackedAsset) returns (uint256 s) {
+            score = s;
+        } catch {
+            score = compositor.getRiskScore();
+        }
+
+        AlertLevel prevLevel = currentLevel;
         AlertLevel newLevel = _scoreToAlertLevel(score);
 
         levelChanged = (newLevel != currentLevel);
         if (levelChanged) {
-            AlertLevel prevLevel = currentLevel;
             currentLevel = newLevel;
             lastTriggerScore = score;
             emit AlertLevelChanged(prevLevel, newLevel, score, block.timestamp);
@@ -158,7 +171,7 @@ abstract contract RiskCircuitBreaker is IRiskConsumer {
     // =========================================================================
 
     /// @notice Returns true if the cooldown is still active.
-    function isInCooldown() external view returns (bool) {
+    function isInCooldown() public view returns (bool) {
         return block.timestamp < lastTriggerTime + config.cooldownSeconds;
     }
 
@@ -239,10 +252,12 @@ contract LendingProtocolCircuitBreaker is RiskCircuitBreaker {
     // Constructor
     // =========================================================================
 
-    /// @param _compositor Address of the UnifiedRiskCompositor.
-    constructor(address _compositor)
+    /// @param _compositor Address of the UnifiedRiskCompositor or MultiAssetRiskRouter.
+    /// @param _trackedAsset Address of the specific collateral asset this breaker protects.
+    constructor(address _compositor, address _trackedAsset)
         RiskCircuitBreaker(
             _compositor,
+            _trackedAsset,
             CircuitBreakerConfig({
                 watchThreshold: 25,
                 warningThreshold: 50,
