@@ -12,11 +12,16 @@ import StressPanel from "@/components/StressPanel";
 import CircuitBreaker from "@/components/CircuitBreaker";
 import ChainlinkPanel from "@/components/ChainlinkPanel";
 import { motion } from "framer-motion";
+import { useState } from "react";
 
 function formatUsd(n: number) {
+  if (!Number.isFinite(n) || n <= 0) return "$0";
+  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
   if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
   if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
-  return `$${(n / 1e3).toFixed(0)}K`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
+  if (n >= 1) return `$${n.toFixed(0)}`;
+  return `$${n.toFixed(2)}`;
 }
 
 function bpsToPercent(bps: number, decimals = 2) {
@@ -24,7 +29,8 @@ function bpsToPercent(bps: number, decimals = 2) {
 }
 
 export default function Dashboard() {
-  const { data, simMode } = useOracleData();
+  const [activeAsset, setActiveAsset] = useState<string>("ETH");
+  const { data, simMode } = useOracleData(activeAsset);
 
   if (!data) {
     return (
@@ -50,7 +56,12 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen grid-bg">
-      <Header data={data} simMode={simMode} />
+      <Header
+        data={data}
+        simMode={simMode}
+        activeAsset={activeAsset}
+        setActiveAsset={setActiveAsset}
+      />
 
       <main className="p-4 lg:p-6 flex flex-col gap-5 max-w-[1600px] mx-auto">
 

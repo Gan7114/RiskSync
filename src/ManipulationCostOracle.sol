@@ -185,6 +185,9 @@ contract ManipulationCostOracle {
 
     uint8 public immutable token1FeedDecimals;
 
+    /// @notice Decimals of token1 (e.g. 18 for WETH, 6 for USDC).
+    uint8 public immutable token1Decimals;
+
     /// @notice TWAP window in seconds. Longer = more expensive attack, slower signal.
     uint32 public immutable twapWindow;
 
@@ -229,7 +232,8 @@ contract ManipulationCostOracle {
         uint256 _costThresholdLow,
         uint256 _costThresholdHigh,
         address _aaveDataProvider,
-        address _token1Address
+        address _token1Address,
+        uint8   _token1Decimals
     ) {
         if (_pool == address(0) || _token1UsdFeed == address(0)) revert InvalidConfig();
         if (_twapWindow < 300) revert ObservationWindowTooShort();
@@ -244,6 +248,7 @@ contract ManipulationCostOracle {
         costThresholdHigh = _costThresholdHigh;
         aaveDataProvider  = IAaveV3DataProviderMCO(_aaveDataProvider);
         token1Address     = _token1Address;
+        token1Decimals    = _token1Decimals > 0 ? _token1Decimals : 18;
 
         // Validate feed decimals.
         uint8 dec = token1UsdFeed.decimals();
@@ -280,34 +285,97 @@ contract ManipulationCostOracle {
         view
         returns (uint256 costUsd, uint256 securityScore)
     {
+        return getManipulationCostForPool(address(pool), address(token1UsdFeed), targetDeviationBps);
+    }
+
+    /// @notice Returns a dashboard-friendly manipulation cost bounded to the configured
+    ///         high threshold. The underlying securityScore still uses the raw cost.
+    /// @dev Useful on testnets where synthetic liquidity can produce astronomically large
+    ///      raw USD values that are not informative for UI consumers.
+    function getManipulationCostNormalized(uint256 targetDeviationBps)
+        external
+        view
+        returns (
+            uint256 normalizedCostUsd,
+            uint256 securityScore,
+            bool capped
+        )
+    {
+        (uint256 rawCostUsd, uint256 score) = getManipulationCostForPool(
+            address(pool),
+            address(token1UsdFeed),
+            targetDeviationBps
+        );
+        (normalizedCostUsd, capped) = _normalizeCostUsd(rawCostUsd);
+        securityScore = score;
+    }
+
+    /// @notice Returns both raw and normalized manipulation costs.
+    /// @dev `rawCostUsd` is the unbounded model output. `normalizedCostUsd` is clamped to
+    ///      `costThresholdHigh` to keep UI output legible while preserving risk scoring.
+    function getManipulationCostBreakdown(uint256 targetDeviationBps)
+        external
+        view
+        returns (
+            uint256 rawCostUsd,
+            uint256 normalizedCostUsd,
+            uint256 securityScore,
+            bool capped
+        )
+    {
+        (rawCostUsd, securityScore) = getManipulationCostForPool(
+            address(pool),
+            address(token1UsdFeed),
+            targetDeviationBps
+        );
+        (normalizedCostUsd, capped) = _normalizeCostUsd(rawCostUsd);
+    }
+
+    /// @notice Returns the capital cost (in USD) required to manipulate the TWAP
+    ///         for ANY arbitrary pool/feed, enabling a single MCO deployment to
+    ///         serve unlimited assets.
+    ///
+    /// @param _pool              Address of the Uniswap V3 pool to analyze.
+    /// @param _token1UsdFeed     Address of the Chainlink feed for the pool's token1.
+    /// @param targetDeviationBps How far attacker must push TWAP.
+    function getManipulationCostForPool(address _pool, address _token1UsdFeed, uint256 targetDeviationBps)
+        public
+        view
+        returns (uint256 costUsd, uint256 securityScore)
+    {
         if (targetDeviationBps == 0 || targetDeviationBps > 5_000) revert DeviationOutOfRange();
+        if (_pool == address(0) || _token1UsdFeed == address(0)) revert InvalidPool();
+
+        IUniswapV3PoolMCO targetPool = IUniswapV3PoolMCO(_pool);
+        AggregatorV3Interface targetFeed = AggregatorV3Interface(_token1UsdFeed);
 
         // ── Check pool is not locked ────────────────────────────────────────
         // We only read slot0 to check the unlocked flag — never for price.
         bool unlocked;
         int24 spotTick;
-        (, spotTick, , , , , unlocked) = pool.slot0();
+        try targetPool.slot0() returns (
+            uint160, int24 _t, uint16, uint16, uint16, uint8, bool _u
+        ) {
+            spotTick = _t;
+            unlocked = _u;
+        } catch {
+            revert InvalidPool();
+        }
         if (!unlocked) revert PoolLocked();
 
         // ── TWAP baseline: manipulation-resistant price from observe() ──────
-        // Baseline is the TWAP, not spot — an attacker cannot pre-manipulate
-        // spot to lower the reported move capital estimate.
-        (uint160 twapSqrtPriceX96, int24 twapTick) = _readTwapSqrtPriceAndTick();
+        (uint160 twapSqrtPriceX96, int24 twapTick) = _readTwapSqrtPriceAndTick(targetPool);
         if (twapSqrtPriceX96 == 0) revert InvalidPool();
 
         // ── Move capital via tick-bitmap walk ───────────────────────────────
-        // Integrates liquidity × Δ(sqrtPrice) across initialized tick boundaries.
-        // Falls back gracefully to single-point L if bitmap calls revert.
         uint256 moveCapitalToken1 = _computeMoveCapitalTickWalk(
+            targetPool,
             twapSqrtPriceX96,
             twapTick,
             targetDeviationBps
         );
 
         // ── Holding cost: opportunity cost of locked capital over twapWindow ─
-        // Flash loans are single-block — cannot span multiple blocks.
-        // Real capital held for twapWindow seconds at the live DeFi borrow rate.
-        //   holdingCost = moveCapital × rate × (window / SECONDS_PER_YEAR)
         uint256 effectiveBorrowRateBps = _getLiveBorrowRateBps();
         uint256 holdingCostToken1 = Math.mulDiv(
             moveCapitalToken1,
@@ -318,8 +386,9 @@ contract ManipulationCostOracle {
         uint256 totalCostToken1 = moveCapitalToken1 + holdingCostToken1;
 
         // Convert token1 → USD via Chainlink.
-        uint256 token1UsdPrice = _readToken1UsdPrice();
-        costUsd = Math.mulDiv(totalCostToken1, token1UsdPrice, 10 ** uint256(token1FeedDecimals));
+        uint256 token1UsdPrice = _readToken1UsdPrice(targetFeed);
+        // Normalize: (token1Amount * price_with_8_dec) / 10^token1Decimals = cost_in_8_decimal_usd
+        costUsd = Math.mulDiv(totalCostToken1, token1UsdPrice, 10 ** uint256(token1Decimals));
 
         securityScore = _scoreFromCost(costUsd);
     }
@@ -339,7 +408,7 @@ contract ManipulationCostOracle {
         (spotSqrtPriceX96, , , , , , unlocked) = pool.slot0();
         if (!unlocked) revert PoolLocked();
 
-        (twapSqrtPriceX96, ) = _readTwapSqrtPriceAndTick();
+        (twapSqrtPriceX96, ) = _readTwapSqrtPriceAndTick(pool);
 
         uint256 spotPrice = _sqrtPriceToQ96Price(spotSqrtPriceX96);
         uint256 twapPrice = _sqrtPriceToQ96Price(twapSqrtPriceX96);
@@ -352,7 +421,7 @@ contract ManipulationCostOracle {
 
     /// @notice Current TWAP price derived from pool observations.
     function getTwapPrice() external view returns (uint256 twapPriceQ96) {
-        (uint160 sqrtTwap, ) = _readTwapSqrtPriceAndTick();
+        (uint160 sqrtTwap, ) = _readTwapSqrtPriceAndTick(pool);
         twapPriceQ96 = _sqrtPriceToQ96Price(sqrtTwap);
     }
 
@@ -396,23 +465,23 @@ contract ManipulationCostOracle {
         (spotTick); // suppress unused warning
         if (!unlocked) revert PoolLocked();
 
-        (uint160 twapSqrtPriceX96, int24 twapTick) = _readTwapSqrtPriceAndTick();
+        (uint160 twapSqrtPriceX96, int24 twapTick) = _readTwapSqrtPriceAndTick(pool);
         if (twapSqrtPriceX96 == 0) revert InvalidPool();
 
         uint256 moveCapitalToken1 = _computeMoveCapitalTickWalk(
+            pool,
             twapSqrtPriceX96,
             twapTick,
             targetDeviationBps
         );
 
         uint256 rateBps = _getLiveBorrowRateBps();
-        uint256 token1UsdPrice = _readToken1UsdPrice();
-        uint8 feedDec = token1FeedDecimals;
+        uint256 token1UsdPrice = _readToken1UsdPrice(token1UsdFeed);
 
-        (costs.cost5min,   costs.score5min)   = _costForWindow(moveCapitalToken1, rateBps,  5 minutes, token1UsdPrice, feedDec);
-        (costs.cost15min,  costs.score15min)  = _costForWindow(moveCapitalToken1, rateBps, 15 minutes, token1UsdPrice, feedDec);
-        (costs.cost30min,  costs.score30min)  = _costForWindow(moveCapitalToken1, rateBps, 30 minutes, token1UsdPrice, feedDec);
-        (costs.cost1hour,  costs.score1hour)  = _costForWindow(moveCapitalToken1, rateBps, 1 hours,    token1UsdPrice, feedDec);
+        (costs.cost5min,   costs.score5min)   = _costForWindow(moveCapitalToken1, rateBps,  5 minutes, token1UsdPrice);
+        (costs.cost15min,  costs.score15min)  = _costForWindow(moveCapitalToken1, rateBps, 15 minutes, token1UsdPrice);
+        (costs.cost30min,  costs.score30min)  = _costForWindow(moveCapitalToken1, rateBps, 30 minutes, token1UsdPrice);
+        (costs.cost1hour,  costs.score1hour)  = _costForWindow(moveCapitalToken1, rateBps, 1 hours,    token1UsdPrice);
     }
 
     /// @notice Computes manipulation cost at an arbitrary TWAP window.
@@ -431,20 +500,21 @@ contract ManipulationCostOracle {
         (, , , , , , bool unlocked) = pool.slot0();
         if (!unlocked) revert PoolLocked();
 
-        (uint160 twapSqrtPriceX96, int24 twapTick) = _readTwapSqrtPriceAndTick();
+        (uint160 twapSqrtPriceX96, int24 twapTick) = _readTwapSqrtPriceAndTick(pool);
         if (twapSqrtPriceX96 == 0) revert InvalidPool();
 
         uint256 moveCapitalToken1 = _computeMoveCapitalTickWalk(
+            pool,
             twapSqrtPriceX96,
             twapTick,
             targetDeviationBps
         );
 
         uint256 rateBps = _getLiveBorrowRateBps();
-        uint256 token1UsdPrice = _readToken1UsdPrice();
+        uint256 token1UsdPrice = _readToken1UsdPrice(token1UsdFeed);
 
         (costUsd, securityScore) = _costForWindow(
-            moveCapitalToken1, rateBps, windowSeconds, token1UsdPrice, token1FeedDecimals
+            moveCapitalToken1, rateBps, windowSeconds, token1UsdPrice
         );
     }
 
@@ -453,8 +523,7 @@ contract ManipulationCostOracle {
         uint256 moveCapitalToken1,
         uint256 rateBps,
         uint256 windowSeconds,
-        uint256 token1UsdPrice,
-        uint8   feedDecimals
+        uint256 token1UsdPrice
     ) internal view returns (uint256 costUsd, uint256 score) {
         uint256 holdingCost = Math.mulDiv(
             moveCapitalToken1,
@@ -462,7 +531,8 @@ contract ManipulationCostOracle {
             BPS * SECONDS_PER_YEAR
         );
         uint256 totalToken1 = moveCapitalToken1 + holdingCost;
-        costUsd = Math.mulDiv(totalToken1, token1UsdPrice, 10 ** uint256(feedDecimals));
+        // Normalize: (token1Amount * price_with_8_dec) / 10^token1Decimals = cost_in_8_decimal_usd
+        costUsd = Math.mulDiv(totalToken1, token1UsdPrice, 10 ** uint256(token1Decimals));
         score   = _scoreFromCost(costUsd);
     }
 
@@ -470,7 +540,7 @@ contract ManipulationCostOracle {
 
     /// @dev Fetches the time-weighted average sqrt price AND corresponding tick via observe().
     ///      Both are needed: sqrtPrice for capital computation, tick for bitmap walk.
-    function _readTwapSqrtPriceAndTick()
+    function _readTwapSqrtPriceAndTick(IUniswapV3PoolMCO targetPool)
         internal
         view
         returns (uint160 sqrtPriceX96, int24 avgTick)
@@ -479,7 +549,7 @@ contract ManipulationCostOracle {
         secondsAgos[0] = twapWindow;
         secondsAgos[1] = 0;
 
-        (int56[] memory tickCumulatives, ) = pool.observe(secondsAgos);
+        (int56[] memory tickCumulatives, ) = targetPool.observe(secondsAgos);
 
         int56 tickDelta = tickCumulatives[1] - tickCumulatives[0];
         avgTick = int24(tickDelta / int56(uint56(uint32(twapWindow))));
@@ -504,6 +574,7 @@ contract ManipulationCostOracle {
     ///      If bitmap navigation reverts (pre-Uniswap-V3 pool or mock without bitmap),
     ///      falls back to single-point L from pool.liquidity().
     function _computeMoveCapitalTickWalk(
+        IUniswapV3PoolMCO targetPool,
         uint160 twapSqrtPriceX96,
         int24   twapTick,
         uint256 targetDeviationBps
@@ -523,24 +594,24 @@ contract ManipulationCostOracle {
 
         // Get tick spacing; if it reverts, fall back to single-point estimate.
         int24 spacing;
-        try pool.tickSpacing() returns (int24 s) {
+        try targetPool.tickSpacing() returns (int24 s) {
             spacing = s;
         } catch {
             // Fallback: single-point estimate using initial liquidity.
-            uint128 liq = pool.liquidity();
+            uint128 liq = targetPool.liquidity();
             if (liq == 0) return 0;
             uint256 sqrtDelta = sqrtTarget - uint256(twapSqrtPriceX96);
             return Math.mulDiv(uint256(liq), sqrtDelta, Q96);
         }
         if (spacing <= 0) spacing = 1;
 
-        uint128 currentLiq = pool.liquidity();
+        uint128 currentLiq = targetPool.liquidity();
         uint256 currentSqrt = uint256(twapSqrtPriceX96);
         int24   currentTick = twapTick;
 
         for (uint8 iter = 0; iter < MAX_TICK_WALK_ITER; ) {
             // Find the next initialized tick strictly above currentTick.
-            (int24 nextTick, bool found) = _nextInitializedTickAbove(currentTick, spacing);
+            (int24 nextTick, bool found) = _nextInitializedTickAbove(targetPool, currentTick, spacing);
 
             // Determine the sqrtPrice at the segment boundary.
             uint256 nextSqrt;
@@ -566,7 +637,7 @@ contract ManipulationCostOracle {
 
             // Apply liquidityNet at the tick crossing.
             // Moving price UP: liquidityNet is ADDED at each initialized tick.
-            currentLiq = _applyLiquidityNet(currentLiq, nextTick);
+            currentLiq = _applyLiquidityNet(targetPool, currentLiq, nextTick);
             currentSqrt = nextSqrt;
             currentTick = nextTick;
 
@@ -576,12 +647,12 @@ contract ManipulationCostOracle {
 
     /// @dev Applies liquidityNet at a tick crossing when price moves upward.
     ///      Extracted to avoid stack-too-deep in the main walk loop.
-    function _applyLiquidityNet(uint128 currentLiq, int24 tick)
+    function _applyLiquidityNet(IUniswapV3PoolMCO targetPool, uint128 currentLiq, int24 tick)
         internal
         view
         returns (uint128)
     {
-        try pool.ticks(tick) returns (
+        try targetPool.ticks(tick) returns (
             uint128, int128 liquidityNet,
             uint256, uint256, int56, uint160, uint32, bool
         ) {
@@ -608,7 +679,7 @@ contract ManipulationCostOracle {
     ///
     /// @return nextTick    The next initialized tick above currentTick (or MAX_TICK if none).
     /// @return found       True if an initialized tick was found within search range.
-    function _nextInitializedTickAbove(int24 currentTick, int24 spacing)
+    function _nextInitializedTickAbove(IUniswapV3PoolMCO targetPool, int24 currentTick, int24 spacing)
         internal
         view
         returns (int24 nextTick, bool found)
@@ -623,7 +694,7 @@ contract ManipulationCostOracle {
             int16 wordPos = int16(searchFrom >> 8);
             uint8 bitPos  = uint8(uint24(searchFrom) & 0xFF);
 
-            uint256 word = pool.tickBitmap(wordPos);
+            uint256 word = targetPool.tickBitmap(wordPos);
 
             // Mask: all bits at bitPos and above (including bitPos).
             // type(uint256).max << bitPos leaves bits [bitPos..255] set.
@@ -723,14 +794,14 @@ contract ManipulationCostOracle {
     }
 
     /// @dev Reads token1/USD price from Chainlink. Reverts if stale or invalid.
-    function _readToken1UsdPrice() internal view returns (uint256) {
+    function _readToken1UsdPrice(AggregatorV3Interface targetFeed) internal view returns (uint256) {
         (
             uint80 roundId,
             int256 answer,
             ,
             uint256 updatedAt,
             uint80 answeredInRound
-        ) = token1UsdFeed.latestRoundData();
+        ) = targetFeed.latestRoundData();
 
         if (answer <= 0 || updatedAt == 0 || answeredInRound < roundId) {
             revert InvalidChainlinkData();
@@ -751,5 +822,12 @@ contract ManipulationCostOracle {
             MAX_SCORE,
             costThresholdHigh - costThresholdLow
         );
+    }
+
+    function _normalizeCostUsd(uint256 rawCostUsd) internal view returns (uint256 normalizedCostUsd, bool capped) {
+        if (rawCostUsd > costThresholdHigh) {
+            return (costThresholdHigh, true);
+        }
+        return (rawCostUsd, false);
     }
 }

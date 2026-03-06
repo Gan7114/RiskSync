@@ -101,6 +101,7 @@ contract TickConcentrationOracle {
 
     error InvalidConfig();
     error InvalidSamples();
+    error InsufficientObservationHistory();
     error SampleIntervalTooShort();
 
     // ─── Constants ────────────────────────────────────────────────────────────
@@ -203,7 +204,15 @@ contract TickConcentrationOracle {
     ///         0 = organic (high entropy, random tick distribution)
     ///         100 = fully concentrated (zero entropy, monotonic manipulation)
     function getConcentrationScore() external view returns (uint256) {
-        int24[] memory ticks = _sampleTicks();
+        return getConcentrationScoreForPool(address(pool), windowSeconds, numSamples);
+    }
+
+    /// @notice Returns the composite 0-100 concentration risk score for ANY pool.
+    /// @param _pool          Uniswap V3 pool address.
+    /// @param _windowSeconds Total observation window in seconds.
+    /// @param _numSamples    Number of samples to draw.
+    function getConcentrationScoreForPool(address _pool, uint32 _windowSeconds, uint8 _numSamples) public view returns (uint256) {
+        int24[] memory ticks = _sampleTicks(_pool, _windowSeconds, _numSamples);
         (uint256 hhiBps,) = _computeHHI(ticks);
         uint256 biasBps = _computeDirectionalBias(ticks);
         return _compositeScore(hhiBps, biasBps);
@@ -215,7 +224,15 @@ contract TickConcentrationOracle {
         view
         returns (ConcentrationResult memory result)
     {
-        int24[] memory ticks = _sampleTicks();
+        return getConcentrationBreakdownForPool(address(pool), windowSeconds, numSamples);
+    }
+
+    function getConcentrationBreakdownForPool(address _pool, uint32 _windowSeconds, uint8 _numSamples)
+        public
+        view
+        returns (ConcentrationResult memory result)
+    {
+        int24[] memory ticks = _sampleTicks(_pool, _windowSeconds, _numSamples);
         (uint256 hhiBps, uint256 uniqueBuckets) = _computeHHI(ticks);
         uint256 biasBps = _computeDirectionalBias(ticks);
 
@@ -241,14 +258,19 @@ contract TickConcentrationOracle {
     /// @notice Returns the raw HHI value (no composite scoring).
     ///         Useful for callers who want to apply their own scoring function.
     function getHHI() external view returns (uint256 hhiBps, uint256 uniqueBuckets) {
-        int24[] memory ticks = _sampleTicks();
+        int24[] memory ticks = _sampleTicks(address(pool), windowSeconds, numSamples);
+        return _computeHHI(ticks);
+    }
+
+    function getHHIForPool(address _pool, uint32 _windowSeconds, uint8 _numSamples) external view returns (uint256 hhiBps, uint256 uniqueBuckets) {
+        int24[] memory ticks = _sampleTicks(_pool, _windowSeconds, _numSamples);
         return _computeHHI(ticks);
     }
 
     /// @notice Returns approximate Renyi H_2 entropy bits for current window.
     ///         0 = fully concentrated. Higher = more organic.
     function getApproximateEntropyBits() external view returns (uint256 entropyBits) {
-        int24[] memory ticks = _sampleTicks();
+        int24[] memory ticks = _sampleTicks(address(pool), windowSeconds, numSamples);
         (uint256 hhiBps,) = _computeHHI(ticks);
         if (hhiBps > 0 && hhiBps < BPS) {
             entropyBits = Math.log2((BPS * 1_000) / hhiBps);
@@ -258,7 +280,7 @@ contract TickConcentrationOracle {
     /// @notice Returns directional bias in BPS.
     ///         5000 = random walk. 10000 = fully monotonic (manipulation).
     function getDirectionalBias() external view returns (uint256 biasBps) {
-        int24[] memory ticks = _sampleTicks();
+        int24[] memory ticks = _sampleTicks(address(pool), windowSeconds, numSamples);
         return _computeDirectionalBias(ticks);
     }
 
@@ -267,23 +289,32 @@ contract TickConcentrationOracle {
     /// @dev Samples numSamples average ticks from the pool using observe().
     ///      Returns an array of numSamples time-weighted average ticks,
     ///      one per sample interval (oldest to most recent).
-    function _sampleTicks() internal view returns (int24[] memory ticks) {
-        uint8  n        = numSamples;
-        uint32 interval = windowSeconds / uint32(n);
+    function _sampleTicks(address _pool, uint32 _windowSeconds, uint8 _numSamples) internal view returns (int24[] memory ticks) {
+        if (_pool == address(0)) revert InvalidConfig();
+        if (_numSamples < MIN_SAMPLES || _numSamples > MAX_SAMPLES) revert InvalidSamples();
+        
+        uint8  n        = _numSamples;
+        uint32 interval = _windowSeconds / uint32(n);
 
         // Build secondsAgos: [window, window-interval, ..., interval, 0]
-        uint32[] memory secondsAgos = new uint32[](uint256(n) + 1);
+        uint32[] memory secondsAgos = new uint32[](n + 1);
         for (uint8 i = 0; i <= n; ) {
-            secondsAgos[i] = uint32(n - i) * interval;
+            secondsAgos[i] = _windowSeconds - i * interval;
             unchecked { ++i; }
         }
 
-        (int56[] memory cumTicks,) = pool.observe(secondsAgos);
+        // Fetch cumulative ticks
+        int56[] memory tickCumulatives;
+        try IUniswapV3PoolTCO(_pool).observe(secondsAgos) returns (int56[] memory tcs, uint160[] memory) {
+            tickCumulatives = tcs;
+        } catch {
+            revert InsufficientObservationHistory();
+        }
 
         // Convert cumulative ticks to per-interval average ticks.
         ticks = new int24[](n);
         for (uint8 i = 0; i < n; ) {
-            int56 delta = cumTicks[i + 1] - cumTicks[i];
+            int56 delta = tickCumulatives[i + 1] - tickCumulatives[i];
             ticks[i] = int24(delta / int56(uint56(interval)));
             unchecked { ++i; }
         }

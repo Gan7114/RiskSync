@@ -104,74 +104,99 @@ function regimeFromVol(volBps: number): VolatilityRegime {
   return "CALM";
 }
 
-// Mutable simulation state
+const ASSET_BASE_CONFIGS: Record<string, any> = {
+  ETH: { vol: 4500, cost: 45_000_000, collateral: 2_500_000_000, hhi: 1200 },
+  BTC: { vol: 3500, cost: 85_000_000, collateral: 4_200_000_000, hhi: 800 },
+  LINK: { vol: 6800, cost: 15_000_000, collateral: 450_000_000, hhi: 2500 },
+  UNI: { vol: 7500, cost: 10_000_000, collateral: 320_000_000, hhi: 3200 },
+  AAVE: { vol: 8200, cost: 6_000_000, collateral: 180_000_000, hhi: 4500 },
+};
+
+// Mutable simulation state keyed by asset
+const _state: Record<string, any> = {};
+
+function getAssetState(asset: string) {
+  if (!_state[asset]) {
+    const cfg = ASSET_BASE_CONFIGS[asset] || ASSET_BASE_CONFIGS.ETH;
+    _state[asset] = {
+      compositeBase: 35 + noise(15),
+      history: [35, 34, 36, 35, 37, 34, 35, 35],
+      ewma: 35,
+      volBase: cfg.vol + noise(cfg.vol * 0.1),
+      costBase: cfg.cost + noise(cfg.cost * 0.1),
+      collateralBase: cfg.collateral + noise(cfg.collateral * 0.05),
+      hhiBase: cfg.hhi + noise(cfg.hhi * 0.1),
+      stressEventCountdown: 0,
+    };
+  }
+  return _state[asset];
+}
+
 let _tick = 0;
-let _stressEventCountdown = 0;
-let _compositeBase = 42;
-let _history: number[] = [42, 40, 44, 41, 43, 39, 45, 42];
-let _ewma = 42;
-let _volBase = 4800;
-let _costBase = 14_000_000;
 let _blockNumber = 20_500_000;
 let _upkeepCount = 0;
 let _ccipBroadcasts = 0;
 let _lastUpkeepTs = Math.floor(Date.now() / 1000) - 180;
 
-export function generateSnapshot(): OracleSnapshot {
+export function generateSnapshot(asset: string = "ETH"): OracleSnapshot {
   _tick++;
   _blockNumber += Math.floor(Math.random() * 3) + 1;
 
+  const st = getAssetState(asset);
+
   // Occasionally trigger a stress event
-  if (_stressEventCountdown === 0 && Math.random() < 0.04) {
-    _stressEventCountdown = 5;
+  if (st.stressEventCountdown === 0 && Math.random() < 0.04) {
+    st.stressEventCountdown = 5;
   }
 
   let targetComposite: number;
-  if (_stressEventCountdown > 0) {
-    _stressEventCountdown--;
-    const intensity = _stressEventCountdown > 3 ? 1 : _stressEventCountdown / 3;
+  if (st.stressEventCountdown > 0) {
+    st.stressEventCountdown--;
+    const intensity = st.stressEventCountdown > 3 ? 1 : st.stressEventCountdown / 3;
     targetComposite = 42 + intensity * 38 + noise(4);
   } else {
-    targetComposite = _compositeBase + noise(5);
+    targetComposite = st.compositeBase + noise(5);
   }
 
   const compositeScore = clamp(Math.round(targetComposite), 0, 100);
-  _compositeBase = clamp(_compositeBase + noise(1.5), 30, 60);
+  st.compositeBase = clamp(st.compositeBase + noise(1.5), 30, 60);
 
   // Update history ring buffer
-  _history = [compositeScore, ..._history.slice(0, 7)];
+  st.history = [compositeScore, ...st.history.slice(0, 7)];
 
   // EWMA: alpha = 0.3
-  _ewma = Math.round(0.3 * compositeScore + 0.7 * _ewma);
+  st.ewma = Math.round(0.3 * compositeScore + 0.7 * st.ewma);
 
-  const prevScore = _history[1] ?? compositeScore;
+  const prevScore = st.history[1] ?? compositeScore;
   const delta = compositeScore - prevScore;
   const momentum = momentumFromDelta(delta);
   const alertLevel = alertFromScore(compositeScore);
   const riskTier = tierFromScore(compositeScore);
 
   // MCO: high manipulation cost = low risk = low score
-  const mcoScoreRaw = clamp(20 + (compositeScore * 0.4) + noise(6), 5, 95);
-  const costUsd = clamp(_costBase + noise(3_000_000), 2_000_000, 80_000_000);
-  _costBase = clamp(_costBase + noise(500_000), 4_000_000, 40_000_000);
+  const mcoScoreRaw = clamp(15 + (st.costBase < 10_000_000 ? 40 : 10) + noise(5), 5, 95);
+  const costUsd = st.costBase + noise(st.costBase * 0.05);
+  st.costBase = clamp(st.costBase + noise(st.costBase * 0.01), 2_000_000, 150_000_000);
   const borrowRateBps = clamp(480 + Math.round(noise(40)), 300, 700);
 
   // TDRV
-  const volBps = clamp(_volBase + Math.round(noise(1500)), 1000, 18000);
-  _volBase = clamp(_volBase + noise(300), 2000, 12000);
-  const tdrvScore = clamp(10 + (volBps / 18000) * 85 + noise(6), 0, 100);
+  const volBps = clamp(st.volBase + Math.round(noise(st.volBase * 0.1)), 500, 25000);
+  st.volBase = clamp(st.volBase + noise(st.volBase * 0.01), 1000, 20000);
+  const tdrvScore = clamp(5 + (volBps / 20000) * 90 + noise(4), 0, 100);
 
   // CPLCS
-  const cplcsScore = clamp(15 + (compositeScore * 0.45) + noise(8), 5, 95);
+  const cplcsScore = clamp(10 + (st.collateralBase < 500_000_000 ? 50 : 15) + noise(8), 5, 95);
   const amplificationBps = clamp(11000 + Math.round(noise(3000)), 10000, 25000);
-  const totalCollateralUsd = clamp(2_100_000_000 + noise(400_000_000), 1_000_000_000, 4_000_000_000);
-  const estimatedLiquidationUsd = (totalCollateralUsd * cplcsScore) / 100;
+  const totalCollateralUsd = st.collateralBase + noise(st.collateralBase * 0.02);
+  st.collateralBase = clamp(st.collateralBase + noise(st.collateralBase * 0.005), 50_000_000, 10_000_000_000);
+  const estimatedLiquidationUsd = (totalCollateralUsd * cplcsScore) / 1000; // conservative ratio
 
   // TCO
-  const hhiBps = clamp(2000 + Math.round(noise(1500)), 500, 9000);
-  const entropyBits = clamp(Math.floor(Math.log2(10000 / hhiBps)), 0, 6);
+  const hhiBps = clamp(st.hhiBase + Math.round(noise(st.hhiBase * 0.1)), 100, 9500);
+  st.hhiBase = clamp(st.hhiBase + noise(st.hhiBase * 0.01), 100, 9900);
+  const entropyBits = clamp(Math.log2(10000 / hhiBps), 0, 6.6); // log2(100) to log2(1)
   const biasBps = clamp(5500 + Math.round(noise(2000)), 5000, 10000);
-  const tcoScore = clamp(Math.round((hhiBps / 10000) * 60 + ((biasBps - 5000) / 5000) * 40 + noise(5)), 0, 100);
+  const tcoScore = clamp(Math.round((hhiBps / 10000) * 100 + noise(5)), 0, 100);
 
   // LTV: 8000 - score * 30 (higher risk → lower LTV)
   const ltvBps = clamp(8000 - compositeScore * 30, 5000, 8000);
@@ -183,7 +208,17 @@ export function generateSnapshot(): OracleSnapshot {
   // Chainlink simulation
   const nowTs = Math.floor(Date.now() / 1000);
   const cvoVolBps = clamp(Math.round(volBps * 1.08 + noise(200)), 800, 20000);
-  const feedPrice = clamp(3200 + Math.round(noise(200)), 2000, 5000);
+
+  const ASSET_BASE_PRICES: Record<string, number> = {
+    ETH: 3200,
+    BTC: 65000,
+    LINK: 18,
+    UNI: 8,
+    AAVE: 135,
+  };
+  const basePrice = ASSET_BASE_PRICES[asset] || 3200;
+  const feedPrice = clamp(basePrice + Math.round(noise(basePrice * 0.05)), basePrice * 0.5, basePrice * 2);
+
   const nextUpkeepIn = clamp(_lastUpkeepTs + 300 - nowTs, 0, 300);
   if (nextUpkeepIn === 0) {
     _upkeepCount++;
@@ -196,9 +231,9 @@ export function generateSnapshot(): OracleSnapshot {
     alertLevel,
     riskTier,
     ltvBps,
-    ewmaScore: _ewma,
+    ewmaScore: st.ewma,
     momentum,
-    scoreHistory: [..._history],
+    scoreHistory: [...st.history],
     mco: {
       score: Math.round(mcoScoreRaw),
       costUsd: Math.round(costUsd),
@@ -228,7 +263,7 @@ export function generateSnapshot(): OracleSnapshot {
       alertLevel,
     },
     chainlink: {
-      feedDescription: "ETH / USD",
+      feedDescription: `${asset} / USD`,
       feedPrice,
       feedRoundId: 110000 + _upkeepCount,
       cvoVolBps,
@@ -246,5 +281,6 @@ export function generateSnapshot(): OracleSnapshot {
     blockNumber: _blockNumber,
     timestamp: Date.now(),
     tick: _tick,
+    asset,
   };
 }

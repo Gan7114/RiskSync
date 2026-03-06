@@ -72,8 +72,8 @@ contract Deploy is Script {
     // MCO cost thresholds (8 decimal USD precision):
     //   Score 0   below $1M   → oracle considered insecure
     //   Score 100 above $100M → oracle considered economically safe
-    uint256 constant COST_THRESHOLD_LOW  = 1_000_000_00;    // $1M
-    uint256 constant COST_THRESHOLD_HIGH = 100_000_000_00;  // $100M
+    uint256 constant COST_THRESHOLD_LOW  = 1_000_000 * 1e8;    // $1M (8-dec USD)
+    uint256 constant COST_THRESHOLD_HIGH = 100_000_000 * 1e8;  // $100M (8-dec USD)
 
     // TDRV: hourly samples, 24-hour window.
     uint32 constant VOL_SAMPLE_INTERVAL = 1 hours;
@@ -121,7 +121,8 @@ contract Deploy is Script {
             COST_THRESHOLD_LOW,
             COST_THRESHOLD_HIGH,
             AAVE_DATA_PROV,     // live WETH borrow rate from Aave V3
-            WETH
+            WETH,
+            18                  // WETH decimals
         );
         console2.log("MCO deployed:         ", address(mco));
 

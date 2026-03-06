@@ -1,0 +1,10 @@
+{
+    "evm": {
+        "chainSelectorName": "ethereum-sepolia",
+        "urcAddress": "0x191A27Eae07712410A0f37FFd4477B82412AA31e",
+        "wethAddress": "0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9"
+    },
+    "api": {
+        "priceUrl": "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&include_24hr_change=true"
+    }
+}

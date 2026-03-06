@@ -41,9 +41,20 @@ const MOMENTUM_MAP: ScoreMomentum[] = [
   "RISING",
   "SPIKING",
 ];
+const USD_SCALE = BigInt(100_000_000);
 
 function bn(v: bigint): number {
   return Number(v);
+}
+
+function usd1e8(v: bigint): number {
+  return Number(v / USD_SCALE);
+}
+
+function toDisplayRoundId(v: bigint): number {
+  if (v <= BigInt(Number.MAX_SAFE_INTEGER)) return Number(v);
+  const low64Mask = (BigInt(1) << BigInt(64)) - BigInt(1);
+  return Number(v & low64Mask);
 }
 
 // ─── Provider singleton ───────────────────────────────────────────────────────
@@ -58,7 +69,13 @@ function getProvider(): ethers.JsonRpcProvider {
 
 // ─── Main fetch ───────────────────────────────────────────────────────────────
 
-export async function fetchLiveSnapshot(): Promise<Partial<OracleSnapshot>> {
+export async function fetchLiveSnapshot(asset: string = "ETH"): Promise<Partial<OracleSnapshot>> {
+  // Graceful degradation: If not ETH, fallback to the improved mock data
+  // to show realistic multi-asset metrics (Sepolia only has ETH pool deployed for MCO/TDRV).
+  if (asset !== "ETH") {
+    return {};
+  }
+
   const provider = getProvider();
   const result: Partial<OracleSnapshot> = {};
 
@@ -83,11 +100,11 @@ export async function fetchLiveSnapshot(): Promise<Partial<OracleSnapshot>> {
       ) as AlertLevel;
 
       // Pillar sub-scores from composite breakdown
-      const mcoInput  = bn(rb[1]);
+      const mcoInput = bn(rb[1]);
       const tdrvInput = bn(rb[2]);
-      const cpInput   = bn(rb[3]);
-      const volBps    = bn(rb[6]);
-      const costUsd   = bn(rb[7]);
+      const cpInput = bn(rb[3]);
+      const volBps = bn(rb[6]);
+      const costUsd = usd1e8(rb[7] as bigint);
 
       if (mcoInput > 0 || costUsd > 0) {
         result.mco = {
@@ -142,15 +159,38 @@ export async function fetchLiveSnapshot(): Promise<Partial<OracleSnapshot>> {
   // ── MCO ──────────────────────────────────────────────────────────────────
   if (ADDRESSES.MCO) {
     const mco = new ethers.Contract(ADDRESSES.MCO, MCO_ABI, provider);
+    const mcoAny = mco as any;
+    let highThresholdUsd: number | undefined;
 
     try {
-      // 2% deviation query (200 bps)
-      const [costUsd, secScore] = await mco.getManipulationCost(BigInt(200));
-      // costUsd is in 8-decimal USD (same precision as Chainlink price feeds).
-      // Divide at BigInt level to avoid Number precision loss on large values.
-      const costUsdScaled = Number((costUsd as bigint) / BigInt(100_000_000));
+      const thresholdHigh = await mco.costThresholdHigh();
+      highThresholdUsd = usd1e8(thresholdHigh as bigint);
+    } catch {
+      // optional on older deployments
+    }
+
+    const hasSaneThreshold = highThresholdUsd === undefined || highThresholdUsd >= 1_000_000;
+
+    try {
+      // 2% deviation query (200 bps). Prefer normalized endpoint when available.
+      let costUsdScaled: number;
+      let secScore: bigint;
+
+      try {
+        if (!hasSaneThreshold) throw new Error("threshold-too-low");
+        const [normalizedCostUsd, normalizedScore] = await mcoAny.getManipulationCostNormalized(BigInt(200));
+        costUsdScaled = usd1e8(normalizedCostUsd as bigint);
+        secScore = normalizedScore as bigint;
+      } catch {
+        const [costUsdRaw, securityScoreRaw] = await mco.getManipulationCost(BigInt(200));
+        const rawUsd = usd1e8(costUsdRaw as bigint);
+        const fallbackCapUsd = hasSaneThreshold ? highThresholdUsd : 100_000_000; // $100M default UI cap
+        costUsdScaled = fallbackCapUsd ? Math.min(rawUsd, fallbackCapUsd) : rawUsd;
+        secScore = securityScoreRaw as bigint;
+      }
+
       result.mco = {
-        score: Math.min(100, bn(secScore as bigint)),
+        score: Math.min(100, bn(secScore)),
         costUsd: costUsdScaled,
         borrowRateBps: result.mco?.borrowRateBps ?? 500,
       };
@@ -246,25 +286,65 @@ export async function fetchLiveSnapshot(): Promise<Partial<OracleSnapshot>> {
   // ── Chainlink Volatility Oracle ───────────────────────────────────────────
   if (ADDRESSES.CVO) {
     const cvo = new ethers.Contract(ADDRESSES.CVO, CVO_ABI, provider);
+    const cvoAny = cvo as any;
 
     try {
       const [desc, , latestPrice, latestRoundId] = await cvo.getPriceFeedDetails();
-      const [cvoVolBps, numRoundsUsed, oldestRoundAge] =
-        await cvo.getVolatilityWithConfidence(BigInt(12), BigInt(90000));
+      let price = Number(latestPrice as bigint) / 1e8;  // 8-decimal Chainlink price
+      let feedRoundId = toDisplayRoundId(latestRoundId as bigint);
 
-      const price = Number(latestPrice) / 1e8;  // 8-decimal Chainlink price
-      const vol = bn(cvoVolBps as bigint);
+      // Prefer direct feed read when the deployed CVO ABI is inconsistent across versions.
+      try {
+        const feedAddr = await cvo.priceFeed();
+        const feed = new ethers.Contract(
+          feedAddr,
+          [
+            "function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)",
+          ],
+          provider
+        );
+        const latest = await feed.latestRoundData();
+        if ((latest[1] as bigint) > BigInt(0)) {
+          price = Number(latest[1] as bigint) / 1e8;
+        }
+        feedRoundId = toDisplayRoundId(latest[0] as bigint);
+      } catch {
+        // keep CVO-provided round/price
+      }
+
+      let cvoVolBps: bigint = BigInt(0);
+      let numRoundsUsed: bigint = BigInt(0);
+      let oldestRoundAge: bigint = BigInt(0);
+
+      try {
+        const latest = await cvoAny["getVolatilityWithConfidence()"]();
+        cvoVolBps = latest[0] as bigint;
+        numRoundsUsed = latest[1] as bigint;
+        oldestRoundAge = latest[2] as bigint;
+      } catch {
+        try {
+          const legacy = await cvoAny["getVolatilityWithConfidence(uint8,uint32)"](BigInt(12), BigInt(90_000));
+          cvoVolBps = legacy[0] as bigint;
+          numRoundsUsed = legacy[1] as bigint;
+          oldestRoundAge = legacy[2] as bigint;
+        } catch {
+          const fallbackVol = await cvo.getVolatility();
+          cvoVolBps = fallbackVol as bigint;
+        }
+      }
+
+      const vol = bn(cvoVolBps);
       const regime: VolatilityRegime =
         vol > 8000 ? "STRESS" : vol > 4000 ? "ELEVATED" : vol > 2000 ? "NORMAL" : "CALM";
 
       result.chainlink = {
         feedDescription: String(desc),
         feedPrice: price > 0 ? Math.round(price) : 0,
-        feedRoundId: bn(latestRoundId as bigint),
+        feedRoundId: feedRoundId,
         cvoVolBps: vol,
         cvoRegime: regime,
-        numRoundsUsed: bn(numRoundsUsed as bigint),
-        oldestRoundAgeHours: Math.round(bn(oldestRoundAge as bigint) / 3600),
+        numRoundsUsed: bn(numRoundsUsed),
+        oldestRoundAgeHours: Math.round(bn(oldestRoundAge) / 3600),
         // Automation / CCIP stats — keep mock values (updated by keepers)
         lastUpkeepTimestamp: Date.now() / 1000,
         nextUpkeepIn: 300,

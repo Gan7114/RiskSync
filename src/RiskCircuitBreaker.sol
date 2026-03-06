@@ -123,7 +123,7 @@ abstract contract RiskCircuitBreaker is IRiskConsumer {
     ///         if the alert level has changed.  Enforces a cooldown between calls.
     /// @dev Permissionless — any EOA, keeper, or automation network can call this.
     /// @return levelChanged True if the alert level changed during this call.
-    function checkAndRespond() external returns (bool levelChanged) {
+    function checkAndRespond() public returns (bool levelChanged) {
         uint256 cooldownEnd = lastTriggerTime + config.cooldownSeconds;
         if (block.timestamp < cooldownEnd) revert CooldownActive(cooldownEnd);
 
@@ -299,7 +299,7 @@ contract LendingProtocolCircuitBreaker is RiskCircuitBreaker {
     // isProtectionActive() is declared with override above ✓
     function applyRiskUpdate() external override returns (bool applied) {
         // Delegating to checkAndRespond so governance / keepers can use either entrypoint.
-        this.checkAndRespond();
+        checkAndRespond();
         return true;
     }
 

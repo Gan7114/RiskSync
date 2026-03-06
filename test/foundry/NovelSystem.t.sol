@@ -291,7 +291,8 @@ contract MCOTest is Test {
             100_000_000_00, // $1M threshold low (1e8)
             10_000_000_000_00, // $100M threshold high (1e8)
             address(0),     // no Aave live rate (use static)
-            address(0)      // no token1 address
+            address(0),     // no token1 address
+            18              // 18 decimals
         );
     }
 
@@ -299,28 +300,28 @@ contract MCOTest is Test {
 
     function test_constructor_rejectsZeroPool() public {
         vm.expectRevert(ManipulationCostOracle.InvalidConfig.selector);
-        new ManipulationCostOracle(address(0), address(feed), 1800, 500, 1e8, 1e10, address(0), address(0));
+        new ManipulationCostOracle(address(0), address(feed), 1800, 500, 1e8, 1e10, address(0), address(0), 18);
     }
 
     function test_constructor_rejectsShortWindow() public {
         vm.expectRevert(ManipulationCostOracle.ObservationWindowTooShort.selector);
-        new ManipulationCostOracle(address(pool), address(feed), 299, 500, 1e8, 1e10, address(0), address(0));
+        new ManipulationCostOracle(address(pool), address(feed), 299, 500, 1e8, 1e10, address(0), address(0), 18);
     }
 
     function test_constructor_rejectsZeroBorrowRate() public {
         vm.expectRevert(ManipulationCostOracle.InvalidConfig.selector);
-        new ManipulationCostOracle(address(pool), address(feed), 1800, 0, 1e8, 1e10, address(0), address(0));
+        new ManipulationCostOracle(address(pool), address(feed), 1800, 0, 1e8, 1e10, address(0), address(0), 18);
     }
 
     function test_constructor_rejectsExcessiveBorrowRate() public {
         vm.expectRevert(ManipulationCostOracle.InvalidConfig.selector);
         // 10001 bps = 100.01% — absurd rate
-        new ManipulationCostOracle(address(pool), address(feed), 1800, 10_001, 1e8, 1e10, address(0), address(0));
+        new ManipulationCostOracle(address(pool), address(feed), 1800, 10_001, 1e8, 1e10, address(0), address(0), 18);
     }
 
     function test_constructor_rejectsInvertedThresholds() public {
         vm.expectRevert(ManipulationCostOracle.InvalidConfig.selector);
-        new ManipulationCostOracle(address(pool), address(feed), 1800, 500, 1e10, 1e8, address(0), address(0));
+        new ManipulationCostOracle(address(pool), address(feed), 1800, 500, 1e10, 1e8, address(0), address(0), 18);
     }
 
     // ── Core functionality ─────────────────────────────────────────────────────
@@ -335,6 +336,44 @@ contract MCOTest is Test {
         (uint256 cost200,) = mco.getManipulationCost(200);
         (uint256 cost1000,) = mco.getManipulationCost(1000);
         assertGt(cost1000, cost200, "larger deviation must cost more");
+    }
+
+    function test_getManipulationCostNormalized_matchesScoreAndCapsWhenNeeded() public view {
+        (uint256 rawCostUsd, uint256 rawScore) = mco.getManipulationCost(200);
+        (uint256 normalizedCostUsd, uint256 normalizedScore, bool capped) = mco.getManipulationCostNormalized(200);
+
+        assertEq(normalizedScore, rawScore, "normalization must not change risk score");
+        assertLe(normalizedCostUsd, mco.costThresholdHigh(), "normalized cost must be bounded by high threshold");
+
+        if (rawCostUsd > mco.costThresholdHigh()) {
+            assertEq(normalizedCostUsd, mco.costThresholdHigh(), "cost must clamp at high threshold");
+            assertTrue(capped, "cap flag must be true when clamped");
+        } else {
+            assertEq(normalizedCostUsd, rawCostUsd, "cost must match raw when below cap");
+            assertFalse(capped, "cap flag must be false when not clamped");
+        }
+    }
+
+    function test_getManipulationCostBreakdown_consistentWithRawAndNormalized() public view {
+        (uint256 rawCostUsd, uint256 rawScore) = mco.getManipulationCost(200);
+        (
+            uint256 breakdownRaw,
+            uint256 normalizedCostUsd,
+            uint256 breakdownScore,
+            bool capped
+        ) = mco.getManipulationCostBreakdown(200);
+
+        assertEq(breakdownRaw, rawCostUsd, "breakdown raw cost must match base query");
+        assertEq(breakdownScore, rawScore, "breakdown score must match base query");
+        assertLe(normalizedCostUsd, mco.costThresholdHigh(), "breakdown normalized cost must be capped");
+
+        if (breakdownRaw > mco.costThresholdHigh()) {
+            assertEq(normalizedCostUsd, mco.costThresholdHigh(), "normalized cost must clamp at threshold");
+            assertTrue(capped, "cap flag should be true when raw exceeds threshold");
+        } else {
+            assertEq(normalizedCostUsd, breakdownRaw, "normalized must equal raw below threshold");
+            assertFalse(capped, "cap flag should be false below threshold");
+        }
     }
 
     function test_getManipulationCost_rejectsZeroDeviation() public {
@@ -376,10 +415,10 @@ contract MCOTest is Test {
     function test_holdingCostIsOpportunityCostNotFlashLoanFee() public {
         // MCO1: 5% borrow rate, MCO2: 50% borrow rate — 10× more expensive to hold
         ManipulationCostOracle mco1 = new ManipulationCostOracle(
-            address(pool), address(feed), 1800, 500, 1, 2, address(0), address(0)
+            address(pool), address(feed), 1800, 500, 1, 2, address(0), address(0), 18
         );
         ManipulationCostOracle mco2 = new ManipulationCostOracle(
-            address(pool), address(feed), 1800, 5_000, 1, 2, address(0), address(0)
+            address(pool), address(feed), 1800, 5_000, 1, 2, address(0), address(0), 18
         );
 
         (uint256 cost1,) = mco1.getManipulationCost(200);
@@ -417,7 +456,8 @@ contract MCOTest is Test {
             uint256(type(uint128).max) / 2,   // absurdly high low threshold
             uint256(type(uint128).max),        // absurdly high high threshold
             address(0),
-            address(0)
+            address(0),
+            18
         );
         (,uint256 score) = mcoLow.getManipulationCost(200);
         assertEq(score, 0, "score must be 0 when cost below low threshold");
@@ -431,7 +471,8 @@ contract MCOTest is Test {
             1,          // $0.00000001 low threshold
             2,          // $0.00000002 high threshold
             address(0),
-            address(0)
+            address(0),
+            18
         );
         (,uint256 scoreHigh) = mcoHigh.getManipulationCost(200);
         assertEq(scoreHigh, 100, "score must be 100 when cost above high threshold");
@@ -498,7 +539,7 @@ contract MCOTest is Test {
         // Get cost without the initialized tick (plain pool, fresh deploy)
         ManipulationCostOracle mcoPlain = new ManipulationCostOracle(
             address(pool), address(feed), 1800, 500,
-            100_000_000_00, 10_000_000_000_00, address(0), address(0)
+            100_000_000_00, 10_000_000_000_00, address(0), address(0), 18
         );
         // Reset bitmap to empty for plain test
         pool.setTickBitmapWord(0, 0);
@@ -508,7 +549,7 @@ contract MCOTest is Test {
         pool.setTickBitmapWord(0, uint256(1) << 1);
         ManipulationCostOracle mcoWalk = new ManipulationCostOracle(
             address(pool), address(feed), 1800, 500,
-            100_000_000_00, 10_000_000_000_00, address(0), address(0)
+            100_000_000_00, 10_000_000_000_00, address(0), address(0), 18
         );
         (uint256 costWalk, ) = mcoWalk.getManipulationCost(500);
 
@@ -528,14 +569,14 @@ contract MCOTest is Test {
 
         ManipulationCostOracle mcoWalk = new ManipulationCostOracle(
             address(pool), address(feed), 1800, 500,
-            1, 2, address(0), address(0) // low thresholds → score=100
+            1, 2, address(0), address(0), 18 // low thresholds → score=100
         );
 
         // Without the extra position, attacking with 100k ETH liquidity is cheaper.
         pool.setTickBitmapWord(0, 0);
         ManipulationCostOracle mcoPlain = new ManipulationCostOracle(
             address(pool), address(feed), 1800, 500,
-            1, 2, address(0), address(0)
+            1, 2, address(0), address(0), 18
         );
 
         pool.setTickBitmapWord(0, uint256(1) << 1);
@@ -560,13 +601,13 @@ contract MCOTest is Test {
         ManipulationCostOracle mcoLive = new ManipulationCostOracle(
             address(pool), address(feed), 1800, 500,
             1, 2,  // low thresholds to get score=100 regardless
-            address(aaveProvider), token1
+            address(aaveProvider), token1, 18
         );
 
         // MCO with static 5% rate only
         ManipulationCostOracle mcoStatic = new ManipulationCostOracle(
             address(pool), address(feed), 1800, 500,
-            1, 2, address(0), address(0)
+            1, 2, address(0), address(0), 18
         );
 
         (uint256 costLive,)   = mcoLive.getManipulationCost(200);
@@ -584,7 +625,7 @@ contract MCOTest is Test {
 
         ManipulationCostOracle mcoFallback = new ManipulationCostOracle(
             address(pool), address(feed), 1800, 500,
-            1, 2, address(revertingAave), address(0xBEEF)
+            1, 2, address(revertingAave), address(0xBEEF), 18
         );
 
         // Should not revert — uses static rate on Aave failure.
@@ -1303,6 +1344,31 @@ contract URCTest is Test {
         assertGt(bLtv, 0);
     }
 
+    function test_getScoreForAsset_usesTrackedAssetForCascadeByDefault() public {
+        UnifiedRiskCompositor urc = _deployURC(35, 40, 25);
+        cplcsMock.setExpectedAsset(WETH);
+        cplcsMock.setCascadeScore(55);
+
+        (,,, uint256 cpInput,,,,,) = urc.getScoreForAsset(address(0x1111), address(0x2222));
+        assertEq(cpInput, 55, "default overload should use tracked asset for CPLCS");
+    }
+
+    function test_getScoreForAsset_allowsExplicitCascadeAssetOverride() public {
+        UnifiedRiskCompositor urc = _deployURC(35, 40, 25);
+        address overrideAsset = address(0xBEEF);
+        cplcsMock.setExpectedAsset(overrideAsset);
+        cplcsMock.setCascadeScore(42);
+
+        (,,, uint256 cpInput,,,,,) = urc.getScoreForAsset(address(0x1111), address(0x2222), overrideAsset);
+        assertEq(cpInput, 42, "asset-specific overload should pass override into CPLCS");
+    }
+
+    function test_getScoreForAsset_rejectsZeroExplicitCascadeAsset() public {
+        UnifiedRiskCompositor urc = _deployURC(35, 40, 25);
+        vm.expectRevert(UnifiedRiskCompositor.ZeroAddress.selector);
+        urc.getScoreForAsset(address(0x1111), address(0x2222), address(0));
+    }
+
     // ── Invariants ─────────────────────────────────────────────────────────────
 
     /// @notice Recommended LTV is always between 50% and 80%.
@@ -1385,9 +1451,11 @@ contract MockTDRV {
 
 contract MockCPLCS {
     uint256 public s_cascadeScore;
+    address public s_expectedAsset;
     bool    public s_revert;
 
     function setCascadeScore(uint256 v) external { s_cascadeScore = v; }
+    function setExpectedAsset(address asset) external { s_expectedAsset = asset; }
     function setRevert(bool r) external { s_revert = r; }
 
     struct CascadeResult {
@@ -1399,8 +1467,9 @@ contract MockCPLCS {
         uint256 cascadeScore;
     }
 
-    function getCascadeScore(address, uint256) external view returns (CascadeResult memory r) {
+    function getCascadeScore(address asset, uint256) external view returns (CascadeResult memory r) {
         if (s_revert) revert("mock CPLCS fail");
+        if (s_expectedAsset != address(0) && asset != s_expectedAsset) revert("mock CPLCS bad asset");
         r.cascadeScore     = s_cascadeScore;
         r.amplificationBps = 10_000;
         r.totalImpactBps   = 2_000;
@@ -1458,7 +1527,7 @@ contract MCOMultiWindowTest is Test {
             1800, 500,               // 30-min TWAP, 5% borrow rate
             100_000_000_00,          // $1M low threshold (8 dec)
             10_000_000_000_00,       // $100M high threshold (8 dec)
-            address(0), address(0)   // no Aave live rate
+            address(0), address(0), 18   // no Aave live rate
         );
     }
 
@@ -1997,6 +2066,8 @@ contract StressScenarioTest is Test {
     StressScenarioRegistry ssr;
 
     address constant WETH = address(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
+    address mockPool = address(0x111);
+    address mockFeed = address(0x222);
 
     function setUp() public {
         mcoMock   = new MockMCO();
@@ -2024,7 +2095,7 @@ contract StressScenarioTest is Test {
     /// @notice Running BLACK_THURSDAY produces a fully populated, bounded result.
     function test_runScenario_blackThursday_validResult() public view {
         StressScenarioRegistry.ScenarioResult memory r =
-            ssr.runScenario(ssr.BLACK_THURSDAY_2020(), WETH);
+            ssr.runScenario(ssr.BLACK_THURSDAY_2020(), address(mockPool), address(mockFeed), WETH);
 
         assertEq(r.scenarioId, ssr.BLACK_THURSDAY_2020(), "scenarioId must match");
         assertLe(r.compositeRiskScore, 100, "composite score must be bounded");
@@ -2038,7 +2109,7 @@ contract StressScenarioTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(StressScenarioRegistry.UnknownScenario.selector, bytes32(0))
         );
-        ssr.runScenario(bytes32(0), WETH);
+        ssr.runScenario(bytes32(0), address(mockPool), address(mockFeed), WETH);
     }
 
     /// @notice Owner can add a custom scenario; count increases to 6.
@@ -2064,16 +2135,16 @@ contract StressScenarioTest is Test {
     /// @notice runAllScenarios returns exactly 5 results.
     function test_runAllScenarios_returnsLength5() public view {
         StressScenarioRegistry.ScenarioResult[] memory results =
-            ssr.runAllScenarios(WETH);
+            ssr.runAllScenarios(address(mockPool), address(mockFeed), WETH);
         assertEq(results.length, 5, "must return one result per built-in scenario");
     }
 
     /// @notice worstCaseScenario score dominates all individual scenario scores.
     function test_worstCaseScenario_dominatesAllOthers() public view {
         (StressScenarioRegistry.ScenarioResult memory worst,) =
-            ssr.worstCaseScenario(WETH);
+            ssr.worstCaseScenario(address(mockPool), address(mockFeed), WETH);
         StressScenarioRegistry.ScenarioResult[] memory all =
-            ssr.runAllScenarios(WETH);
+            ssr.runAllScenarios(address(mockPool), address(mockFeed), WETH);
         for (uint256 i = 0; i < all.length; i++) {
             assertGe(
                 worst.compositeRiskScore,
@@ -2608,7 +2679,7 @@ contract ChainlinkVolatilityOracleTest is Test {
     function test_realizedVol_stablePrices_isLow() public {
         _pushRounds(SAMPLES, 2000e8, 0); // all same price
         ChainlinkVolatilityOracle cvo = _deploy();
-        uint256 vol = cvo.getRealizedVolatility();
+        uint256 vol = cvo.getVolatility();
         assertEq(vol, 0, "zero return = zero vol");
     }
 
@@ -2617,7 +2688,7 @@ contract ChainlinkVolatilityOracleTest is Test {
     function test_realizedVol_risingPrices_isNonzero() public {
         _pushRounds(SAMPLES, 2000e8, 100); // +1% per step
         ChainlinkVolatilityOracle cvo = _deploy();
-        uint256 vol = cvo.getRealizedVolatility();
+        uint256 vol = cvo.getVolatility();
         assertGt(vol, 0, "trending prices = positive vol");
     }
 
@@ -2683,7 +2754,7 @@ contract ChainlinkVolatilityOracleTest is Test {
         feed.pushRound(1, 2000e8, block.timestamp - STALENESS - 1);
         ChainlinkVolatilityOracle cvo = _deploy();
         vm.expectRevert("CVO: latest round stale");
-        cvo.getRealizedVolatility();
+        cvo.getVolatility();
     }
 }
 

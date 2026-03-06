@@ -7,57 +7,67 @@ import { fetchLiveSnapshot } from "@/lib/liveData";
 import type { OracleSnapshot } from "@/lib/types";
 
 // Simulation refreshes every 3s; live mode polls contracts every 10s (RPC rate-limit friendly)
-const SIM_POLL_MS  = 3_000;
+const SIM_POLL_MS = 3_000;
 const LIVE_POLL_MS = 10_000;
 const PRICE_REFRESH_MS = 30_000;
 
-async function fetchEthPrice(): Promise<number | null> {
+const ASSET_TO_CG_ID: Record<string, string> = {
+  ETH: "ethereum",
+  BTC: "bitcoin",
+  LINK: "chainlink",
+  UNI: "uniswap",
+  AAVE: "aave",
+};
+
+async function fetchAssetPrice(asset: string): Promise<number | null> {
+  const cgId = ASSET_TO_CG_ID[asset] || "ethereum";
   try {
     const res = await fetch(
-      "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
+      `https://api.coingecko.com/api/v3/simple/price?ids=${cgId}&vs_currencies=usd`,
       { cache: "no-store" }
     );
     if (!res.ok) return null;
     const json = await res.json();
-    return Math.round(json?.ethereum?.usd ?? 0) || null;
+    return Math.round(json?.[cgId]?.usd ?? 0) || null;
   } catch {
     return null;
   }
 }
 
-export function useOracleData() {
+export function useOracleData(activeAsset: string = "ETH") {
   const live = isLive();
   const [data, setData] = useState<OracleSnapshot | null>(null);
   const [simMode] = useState(!live);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const priceRef = useRef<number | null>(null);
 
-  // Real ETH price from CoinGecko — overlaid in both sim and live modes
+  // Real asset price from CoinGecko — overlaid in both sim and live modes
   useEffect(() => {
     let cancelled = false;
+    priceRef.current = null;
     const refresh = async () => {
-      const price = await fetchEthPrice();
+      const price = await fetchAssetPrice(activeAsset);
       if (!cancelled && price) priceRef.current = price;
     };
     refresh();
     const id = setInterval(refresh, PRICE_REFRESH_MS);
     return () => { cancelled = true; clearInterval(id); };
-  }, []);
+  }, [activeAsset]);
 
   useEffect(() => {
-    // Build a snapshot: start from mock baseline, overlay live data, overlay real ETH price
+    // Build a snapshot: start from mock baseline, overlay live data, overlay real asset price
     const buildSnapshot = async (): Promise<OracleSnapshot> => {
-      const base = generateSnapshot();
+      const base = generateSnapshot(activeAsset);
 
       if (live) {
         try {
-          const liveData = await fetchLiveSnapshot();
+          const liveData = await fetchLiveSnapshot(activeAsset);
           // Deep-merge: live data wins field-by-field over the mock baseline
           Object.assign(base, liveData);
-          if (liveData.mco)  Object.assign(base.mco,  liveData.mco);
+          if (liveData.mco) Object.assign(base.mco, liveData.mco);
           if (liveData.tdrv) Object.assign(base.tdrv, liveData.tdrv);
           if (liveData.cplcs) Object.assign(base.cplcs, liveData.cplcs);
-          if (liveData.tco)  Object.assign(base.tco,  liveData.tco);
+          if (liveData.tco) Object.assign(base.tco, liveData.tco);
           if (liveData.circuitBreaker) Object.assign(base.circuitBreaker, liveData.circuitBreaker);
           if (liveData.chainlink) Object.assign(base.chainlink, liveData.chainlink);
         } catch {
@@ -65,7 +75,7 @@ export function useOracleData() {
         }
       }
 
-      // Always overlay real ETH price if available (works in both modes)
+      // Always overlay real asset price if available (works in both modes)
       if (priceRef.current) {
         base.chainlink.feedPrice = priceRef.current;
       }
@@ -84,7 +94,7 @@ export function useOracleData() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [live]);
+  }, [live, activeAsset]);
 
   return { data, simMode };
 }

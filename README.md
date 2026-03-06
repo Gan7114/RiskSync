@@ -1,12 +1,19 @@
 # DeFiStressOracle
 
-On-chain risk middleware for DeFi protocols — ten composable contracts that measure
-oracle manipulation cost, realized volatility, cross-protocol liquidation cascades, and
-tick-sequence entropy, then unify them into a single risk score with autonomous circuit
-breakers, Chainlink-powered keepers, cross-chain alert propagation, and historical
-stress-scenario replay.
+**Chainlink Convergence 2026 Hackathon Submission — Risk & Compliance Track**
 
-## Live Demo
+On-chain risk middleware for DeFi — ten composable contracts that measure oracle manipulation cost, realized volatility, cross-protocol liquidation cascades, and tick-sequence entropy. It unifies these into a single risk score with autonomous circuit breakers and Chainlink Automation/CCIP.
+
+## 🎖 Hackathon Submission (March 2026)
+
+This project is built for the **Chainlink Convergence 2026 Hackathon**. It leverages the latest **Chainlink Runtime Environment (CRE)** and on-chain risk primitives to solve the $10B "Risk Visibility Gap" in DeFi.
+
+### ⛓️ Key Chainlink Integrations
+- **Automation**: 5-minute decentralized heartbeat for risk updates (`AutomatedRiskUpdater.sol`).
+- **CCIP**: Cross-chain risk alert propagation to Base, Arbitrum, and Optimism.
+- **Price Feeds**: Real-time volatility verification (`ChainlinkVolatilityOracle.sol`).
+
+## Live Demo (Dashboard)
 
 > Dashboard connects directly to deployed Sepolia contracts — real on-chain risk data, live Chainlink ETH/USD price feed.
 
@@ -55,8 +62,8 @@ src/
     └── TickMathLib.sol                 — Shared Uniswap V3 tick <-> sqrtPrice math
 
 test/foundry/
-├── NovelSystem.t.sol  — 179 unit tests (mock-based, no RPC needed)
-└── ForkTests.t.sol    — Mainnet fork tests (auto-skip when MAINNET_RPC_URL unset)
+├── NovelSystem.t.sol  — 163 unit tests (mock-based, no RPC needed)
+└── ForkTests.t.sol    — 21 mainnet fork tests (auto-skip when MAINNET_RPC_URL unset)
 
 script/
 ├── Deploy.s.sol         — One-shot mainnet deployment (all 10 contracts)
@@ -102,18 +109,28 @@ ManipulationCostOracle.MultiWindowCost memory mw = mco.getManipulationCostMultiW
 (uint256 cost, uint256 s) = mco.getManipulationCostAtWindow(devBps, windowSeconds);
 ```
 
-Constructor (8 params):
+Constructor (9 params):
 ```solidity
 new ManipulationCostOracle(
     address pool,
     address token1UsdFeed,
     uint32  twapWindow,           // min 300 s
     uint256 borrowRatePerYearBps, // 1-10000
-    uint256 costThresholdLow,
-    uint256 costThresholdHigh,
+    uint256 costThresholdLow,     // 8-decimal USD, e.g. 1_000_000 * 1e8
+    uint256 costThresholdHigh,    // 8-decimal USD, e.g. 100_000_000 * 1e8
     address aaveDataProvider,     // address(0) = disabled
-    address token1Address         // address(0) = disabled
+    address token1Address,        // address(0) = disabled
+    uint8   token1Decimals        // 18 for WETH, 6 for USDC
 )
+```
+
+Normalized/breakdown helpers (useful for UIs — caps display cost without affecting score):
+```solidity
+(uint256 normalizedCostUsd, uint256 score, bool capped) =
+    mco.getManipulationCostNormalized(devBps);
+
+(uint256 rawCostUsd, uint256 normalizedCostUsd, uint256 score, bool capped) =
+    mco.getManipulationCostBreakdown(devBps);
 ```
 
 ---
@@ -203,12 +220,18 @@ history with EWMA smoothing and momentum tracking.
 ```solidity
 (uint256 score, UnifiedRiskCompositor.RiskTier tier, uint256 ltvBps) = urc.updateRiskScore();
 
-uint256 ewma            = urc.getEWMAScore();
-uint256[8] memory hist  = urc.getScoreHistory();
-bool tcoEnabled         = urc.isTcoEnabled();
+uint256 ewma           = urc.getEWMAScore();
+uint256[] memory hist  = urc.getScoreHistory(); // up to 8 entries
+bool tcoEnabled        = urc.isTcoEnabled();
 
-// Momentum: ACCELERATING / STABLE / DECELERATING / REVERSING
-UnifiedRiskCompositor.ScoreMomentum momentum = urc.getScoreMomentum();
+// Momentum enum: PLUNGING / FALLING / STABLE / RISING / SPIKING
+(UnifiedRiskCompositor.ScoreMomentum momentum, int256 delta) = urc.getScoreMomentum();
+
+// Multi-asset query (does NOT update cached state)
+(uint256 comp, uint256 mcoIn, uint256 tdrvIn, uint256 cpIn,
+ RiskTier t, uint256 ltv, uint256 volBps, uint256 costUsd, uint256 tcoIn)
+    = urc.getScoreForAsset(pool, feed);           // cascade uses trackedAsset
+    = urc.getScoreForAsset(pool, feed, asset);    // explicit cascade asset override
 ```
 
 Weights are mutable via `setWeights(uint8 w1, uint8 w2, uint8 w3, uint8 w4)`
@@ -271,6 +294,20 @@ registry.addCustomScenario(name, shockBps, volBps, devBps, description);
 
 ## Chainlink Integration
 
+### File Links (for Judges)
+| Product | Contract File | Key function |
+|---------|--------------|-------------|
+| **Price Feeds** | [`ChainlinkVolatilityOracle.sol`](src/ChainlinkVolatilityOracle.sol) | `getVolatilityWithConfidence()`, `getPriceFeedDetails()` |
+| **Automation** | [`AutomatedRiskUpdater.sol`](src/AutomatedRiskUpdater.sol) | `checkUpkeep()`, `performUpkeep()` |
+| **CCIP** | [`CrossChainRiskBroadcaster.sol`](src/CrossChainRiskBroadcaster.sol) | `broadcastToAll()`, `_ccipReceive()` |
+| **CRE Workflow** | [`workflows/risk-orchestrator/index.ts`](workflows/risk-orchestrator/index.ts) | `onTrigger()` |
+
+### How Judges Can Verify in 5 Minutes
+See **[docs/JUDGE_PACK.md](docs/JUDGE_PACK.md)** for:
+- Exact `cast call` commands to read live Sepolia data
+- Expected outputs for each Chainlink product
+- Complete `forge test` + `npm build` commands
+
 Three contracts add deep Chainlink product coverage on top of the four-pillar core.
 
 ### ChainlinkVolatilityOracle — Price Feeds
@@ -316,6 +353,10 @@ uint256 nextIn   = aru.secondsUntilNextUpkeep();
 uint256 score    = aru.currentRiskScore();
 ```
 
+> **Live Sepolia Automation Proof:**
+> `AutomatedRiskUpdater` is actively registered on the Chainlink Automation Network.
+> **Upkeep ID**: `43299524312024280719987296485661783062184338223244119633145042715674688313470`
+
 `checkUpkeep` returns `true` when:
 - Contract is not paused
 - `block.timestamp >= lastUpkeep + interval`
@@ -326,6 +367,9 @@ uint256 score    = aru.currentRiskScore();
 Sends a `RiskPayload{compositeScore, alertLevel, ltvBps, timestamp, sourceContract}`
 to any registered L2 destination via **Chainlink CCIP** whenever the alert level is
 at or above the configured threshold (default: WARNING).
+
+> **Live Sepolia CCIP Integration Proof:**
+> See **[CCIP Explorer Link](https://ccip.chain.link/msg/0xe2ab53e3cfd9ed10c6d0b4db3b6a2a984259677e9e956a9d97074f2fb4031724)** for a live cross-chain message successfully sent from Sepolia to Base Sepolia using this implementation.
 
 ```solidity
 // Register a destination chain
@@ -356,8 +400,8 @@ curl -L https://foundry.paradigm.xyz | bash && foundryup
 # Build
 forge build
 
-# Unit tests (no RPC needed — 179 tests, 15 suites)
-forge test --match-path test/foundry/NovelSystem.t.sol -vvv
+# Unit tests (no RPC needed — 184 tests total)
+forge test --no-match-path test/foundry/ForkTests.t.sol -vvv
 
 # Mainnet fork tests (requires RPC)
 MAINNET_RPC_URL=https://mainnet.infura.io/v3/YOUR_KEY \

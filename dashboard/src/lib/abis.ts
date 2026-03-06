@@ -9,7 +9,10 @@ export const URC_ABI = [
 
 export const MCO_ABI = [
   "function getManipulationCost(uint256 targetDeviationBps) view returns (uint256 costUsd, uint256 securityScore)",
+  "function getManipulationCostNormalized(uint256 targetDeviationBps) view returns (uint256 normalizedCostUsd, uint256 securityScore, bool capped)",
+  "function getManipulationCostBreakdown(uint256 targetDeviationBps) view returns (uint256 rawCostUsd, uint256 normalizedCostUsd, uint256 securityScore, bool capped)",
   "function getEffectiveBorrowRateBps() view returns (uint256)",
+  "function costThresholdHigh() view returns (uint256)",
   "function getTwapVsSpot() view returns (uint160 twapSqrtPriceX96, uint160 spotSqrtPriceX96, uint256 deviationBps)",
 ];
 
@@ -40,6 +43,9 @@ export const CIRCUIT_BREAKER_ABI = [
 ];
 
 export const CVO_ABI = [
-  "function getPriceFeedDetails() view returns (string memory description, uint8 decimals, int256 latestPrice, uint80 latestRoundId)",
+  "function priceFeed() view returns (address)",
+  "function getPriceFeedDetails() view returns (string memory description, uint8 decimals, uint256 latestPrice, uint80 latestRoundId)",
+  "function getVolatilityWithConfidence() view returns (uint256 annualizedVolBps, uint8 numRoundsUsed, uint256 oldestRoundAge, uint256 latestPrice, uint80 latestRoundId)",
   "function getVolatilityWithConfidence(uint8 numRounds, uint32 maxStalenessSecs) view returns (uint256 annualizedVolBps, uint256 numRoundsUsed, uint256 oldestRoundAgeSeconds)",
+  "function getVolatility() view returns (uint256 annualizedVolBps)",
 ];

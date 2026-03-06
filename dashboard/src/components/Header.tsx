@@ -2,14 +2,21 @@
 
 import { motion } from "framer-motion";
 import { Activity, Cpu, Radio, Wifi } from "lucide-react";
-import type { OracleSnapshot } from "@/lib/types";
+import type { OracleSnapshot, Asset } from "@/lib/types";
+import { SUPPORTED_ASSETS } from "@/lib/types";
+import { ChevronDown } from "lucide-react";
+import { useState } from "react";
 
 interface Props {
   data: OracleSnapshot | null;
   simMode: boolean;
+  activeAsset: string;
+  setActiveAsset: (symbol: string) => void;
 }
 
-export default function Header({ data, simMode }: Props) {
+export default function Header({ data, simMode, activeAsset, setActiveAsset }: Props) {
+  const [isOpen, setIsOpen] = useState(false);
+
   return (
     <header className="glass gradient-border sticky top-0 z-50 px-6 py-3 flex items-center justify-between">
       {/* Left: branding */}
@@ -34,7 +41,37 @@ export default function Header({ data, simMode }: Props) {
         </div>
       </div>
 
-      {/* Center: status ticker */}
+      {/* Center Left: Asset Selector */}
+      <div className="relative z-50">
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className="flex items-center gap-2 px-4 py-2 bg-[#1e293b] hover:bg-[#334155] border border-slate-700 rounded-lg text-slate-200 font-bold transition-colors"
+        >
+          {SUPPORTED_ASSETS.find((a) => a.symbol === activeAsset)?.name || "Select Asset"} ({activeAsset})
+          <ChevronDown className="w-4 h-4 text-slate-400" />
+        </button>
+
+        {isOpen && (
+          <div className="absolute top-12 left-0 w-48 bg-[#0f172a] border border-slate-800 rounded-lg shadow-xl overflow-hidden">
+            {SUPPORTED_ASSETS.map((asset) => (
+              <button
+                key={asset.symbol}
+                onClick={() => {
+                  setActiveAsset(asset.symbol);
+                  setIsOpen(false);
+                }}
+                className={`w-full text-left px-4 py-3 hover:bg-[#1e293b] transition-colors ${activeAsset === asset.symbol ? "text-indigo-400 bg-[#1e293b]/50" : "text-slate-300"
+                  }`}
+              >
+                <div className="font-bold">{asset.symbol}</div>
+                <div className="text-xs text-slate-500">{asset.name}</div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Center Right: status ticker */}
       {data && (
         <div className="hidden md:flex items-center gap-6 text-[11px] text-slate-400 font-mono">
           <span className="flex items-center gap-1.5">

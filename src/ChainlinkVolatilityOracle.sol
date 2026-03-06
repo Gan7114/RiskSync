@@ -122,8 +122,12 @@ contract ChainlinkVolatilityOracle {
 
     /// @notice Annualized realized volatility sourced from Chainlink round history.
     /// @return annualizedVolBps  Annualized vol in basis points (e.g. 5000 = 50%)
-    function getRealizedVolatility() external view returns (uint256 annualizedVolBps) {
-        (annualizedVolBps,,,, ) = _computeVolatility();
+    function getVolatility() external view returns (uint256 annualizedVolBps) {
+        (annualizedVolBps,,,,) = _computeVolatility(priceFeed, numSamples);
+    }
+
+    function getVolatilityForFeed(address feed, uint8 samples) public view returns (uint256 annualizedVolBps) {
+        (annualizedVolBps,,,,) = _computeVolatility(AggregatorV3Interface(feed), samples);
     }
 
     /// @notice Maps realized vol to a 0-100 risk score.
@@ -133,8 +137,17 @@ contract ChainlinkVolatilityOracle {
         uint256 lowVolThresholdBps,
         uint256 highVolThresholdBps
     ) external view returns (uint256 volScore) {
+        return getVolatilityScoreForFeed(address(priceFeed), numSamples, lowVolThresholdBps, highVolThresholdBps);
+    }
+
+    function getVolatilityScoreForFeed(
+        address feed,
+        uint8 samples,
+        uint256 lowVolThresholdBps,
+        uint256 highVolThresholdBps
+    ) public view returns (uint256 volScore) {
         require(highVolThresholdBps > lowVolThresholdBps, "CVO: bad thresholds");
-        (uint256 volBps,,,,) = _computeVolatility();
+        (uint256 volBps,,,,) = _computeVolatility(AggregatorV3Interface(feed), samples);
         if (volBps <= lowVolThresholdBps)  return 0;
         if (volBps >= highVolThresholdBps) return 100;
         return ((volBps - lowVolThresholdBps) * 100) / (highVolThresholdBps - lowVolThresholdBps);
@@ -142,7 +155,7 @@ contract ChainlinkVolatilityOracle {
 
     /// @notice Returns the current volatility regime classification.
     function getVolatilityRegime() external view returns (VolatilityRegime) {
-        (uint256 volBps,,,,) = _computeVolatility();
+        (uint256 volBps,,,,) = _computeVolatility(priceFeed, numSamples);
         return _regime(volBps);
     }
 
@@ -157,10 +170,20 @@ contract ChainlinkVolatilityOracle {
         uint256 latestPrice,
         uint80  latestRoundId
     ) {
-        description = priceFeed.description();
-        decimals    = feedDecimals;
+        return getPriceFeedDetailsForFeed(address(priceFeed));
+    }
 
-        (uint80 roundId, int256 answer,, uint256 updatedAt,) = priceFeed.latestRoundData();
+    function getPriceFeedDetailsForFeed(address feed) public view returns (
+        string  memory description,
+        uint8   decimals,
+        uint256 latestPrice,
+        uint80  latestRoundId
+    ) {
+        AggregatorV3Interface targetFeed = AggregatorV3Interface(feed);
+        description = targetFeed.description();
+        decimals    = targetFeed.decimals();
+
+        (uint80 roundId, int256 answer,, uint256 updatedAt,) = targetFeed.latestRoundData();
         require(answer > 0, "CVO: negative price");
         require(block.timestamp - updatedAt <= maxStalenessSeconds, "CVO: feed stale");
 
@@ -170,21 +193,34 @@ contract ChainlinkVolatilityOracle {
 
     /// @notice Full volatility data with data-quality indicators.
     function getVolatilityWithConfidence() external view returns (VolatilityWithConfidence memory result) {
-        (
-            uint256 volBps,
-            uint8   nUsed,
-            uint256 oldestAge,
-            uint256 latestPrice,
-            uint80  latestRound
-        ) = _computeVolatility();
+        (uint256 annualizedVolBps, uint8 numRoundsUsed, uint256 oldestRoundAge, uint256 latestPrice, uint80 latestRoundId,) =
+            getFullReportForFeed(address(priceFeed), numSamples);
 
         result = VolatilityWithConfidence({
-            annualizedVolBps: volBps,
-            numRoundsUsed:    nUsed,
-            oldestRoundAge:   oldestAge,
+            annualizedVolBps: annualizedVolBps,
+            numRoundsUsed:    numRoundsUsed,
+            oldestRoundAge:   oldestRoundAge,
             latestPrice:      latestPrice,
-            latestRoundId:    latestRound
+            latestRoundId:    latestRoundId
         });
+    }
+
+    function getFullReportForFeed(address feed, uint8 samples) public view returns (
+        uint256 annualizedVolBps,
+        uint8   numRoundsUsed,
+        uint256 oldestRoundAge,
+        uint256 latestPrice,
+        uint80  latestRoundId,
+        VolatilityRegime regime
+    ) {
+        (
+            annualizedVolBps,
+            numRoundsUsed,
+            oldestRoundAge,
+            latestPrice,
+            latestRoundId
+        ) = _computeVolatility(AggregatorV3Interface(feed), samples);
+        regime = _regime(annualizedVolBps);
     }
 
     /// @notice Both vol and regime in one call.
@@ -192,8 +228,14 @@ contract ChainlinkVolatilityOracle {
         uint256 annualizedVolBps,
         VolatilityRegime regime
     ) {
-        (annualizedVolBps,,,,) = _computeVolatility();
-        regime = _regime(annualizedVolBps);
+        (
+            annualizedVolBps,
+            ,
+            ,
+            ,
+            ,
+            regime
+        ) = getFullReportForFeed(address(priceFeed), numSamples);
     }
 
     // =========================================================================
@@ -202,15 +244,19 @@ contract ChainlinkVolatilityOracle {
 
     /// @dev Core computation: walks back `numSamples` rounds, builds price array,
     ///      computes simple returns, variance, and annualizes.
-    function _computeVolatility() internal view returns (
+    function _computeVolatility(AggregatorV3Interface feed, uint8 _samples) internal view returns (
         uint256 annualizedVolBps,
         uint8   numRoundsUsed,
         uint256 oldestRoundAge,
         uint256 latestPrice,
         uint80  latestRoundId
     ) {
+        require(address(feed) != address(0), "CVO: zero feed");
+        require(_samples >= 4, "CVO: min 4 samples");
+        require(_samples <= 48, "CVO: max 48 samples");
+
         // 1. Get the latest round as our anchor
-        (uint80 roundId, int256 answer,, uint256 updatedAt,) = priceFeed.latestRoundData();
+        (uint80 roundId, int256 answer,, uint256 updatedAt,) = feed.latestRoundData();
         require(answer > 0, "CVO: negative latest price");
         require(block.timestamp - updatedAt <= maxStalenessSeconds, "CVO: latest round stale");
 
@@ -220,8 +266,8 @@ contract ChainlinkVolatilityOracle {
         // 2. Collect prices walking backwards through round history
         //    Chainlink round IDs are not strictly sequential (phase|aggregatorRound packed)
         //    We decrement by 1 and skip failed calls gracefully.
-        uint256[] memory prices  = new uint256[](numSamples);
-        uint256[] memory timestamps = new uint256[](numSamples);
+        uint256[] memory prices  = new uint256[](_samples);
+        uint256[] memory timestamps = new uint256[](_samples);
         uint8 collected = 0;
 
         uint80 currentRound = roundId;
@@ -231,17 +277,17 @@ contract ChainlinkVolatilityOracle {
         timestamps[collected] = updatedAt;
         collected++;
 
-        for (uint80 i = 1; i < numSamples * 3 && collected < numSamples; i++) {
+        for (uint80 i = 1; i < _samples * 3 && collected < _samples; i++) {
             if (currentRound == 0) break;
             currentRound--;
 
-            try priceFeed.getRoundData(currentRound) returns (
-                uint80, int256 p, uint256, uint256 ts, uint80
+            try feed.getRoundData(currentRound) returns (
+                uint80, int256 rAnswer, uint256, uint256 rUpdatedAt, uint80
             ) {
-                if (p > 0 && ts > 0 && block.timestamp - ts <= maxStalenessSeconds) {
-                    prices[collected]     = uint256(p);
-                    timestamps[collected] = ts;
-                    if (ts < oldestTs) oldestTs = ts;
+                if (rAnswer > 0 && rUpdatedAt > 0 && block.timestamp - rUpdatedAt <= maxStalenessSeconds) {
+                    prices[collected]     = uint256(rAnswer);
+                    timestamps[collected] = rUpdatedAt;
+                    if (rUpdatedAt < oldestTs) oldestTs = rUpdatedAt;
                     collected++;
                 }
             } catch { /* skip gaps in round history */ }

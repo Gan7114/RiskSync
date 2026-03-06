@@ -200,8 +200,23 @@ contract TickDerivedRealizedVolatility {
     ///
     /// @return annualizedVolBps Annualized realized volatility in basis points.
     function getRealizedVolatility() external view returns (uint256 annualizedVolBps) {
-        uint32 n = uint32(numSamples);
-        uint32 interval = sampleInterval;
+        return getRealizedVolatilityForPool(address(pool), sampleInterval, numSamples);
+    }
+
+    /// @notice Returns annualized realized volatility in basis points for ANY arbitrary pool
+    ///         using custom interval and sample count.
+    /// @param _pool          Address of the Uniswap V3 pool to analyze.
+    /// @param interval       Seconds between each observation sample.
+    /// @param nSamples       Number of intervals to average over.
+    function getRealizedVolatilityForPool(address _pool, uint32 interval, uint8 nSamples) public view returns (uint256 annualizedVolBps) {
+        if (_pool == address(0)) revert InvalidConfig();
+        if (interval < MIN_SAMPLE_INTERVAL) revert SampleIntervalTooShort();
+        if (nSamples < MIN_SAMPLES) revert TooFewSamples();
+        if (nSamples > MAX_SAMPLES) revert TooManySamples();
+
+        IUniswapV3PoolTDRV targetPool = IUniswapV3PoolTDRV(_pool);
+
+        uint32 n = uint32(nSamples);
 
         // Fetch (n+1) tick snapshots → n avg ticks → (n-1) log returns.
         // secondsAgos: [n*interval, (n-1)*interval, ..., interval, 0]
@@ -211,7 +226,12 @@ contract TickDerivedRealizedVolatility {
             unchecked { ++i; }
         }
 
-        (int56[] memory tickCumulatives, ) = pool.observe(secondsAgos);
+        int56[] memory tickCumulatives;
+        try targetPool.observe(secondsAgos) returns (int56[] memory tcs, uint160[] memory) {
+            tickCumulatives = tcs;
+        } catch {
+            revert InsufficientObservationHistory();
+        }
 
         // Step 1: Compute N avg ticks from (N+1) cumulative snapshots.
         //         avgTick[i] = (tickCumulatives[i+1] - tickCumulatives[i]) / interval
@@ -277,9 +297,19 @@ contract TickDerivedRealizedVolatility {
         uint256 lowVolThresholdBps,
         uint256 highVolThresholdBps
     ) external view returns (uint256 volScore) {
+        return getVolatilityScoreForPool(address(pool), sampleInterval, numSamples, lowVolThresholdBps, highVolThresholdBps);
+    }
+
+    function getVolatilityScoreForPool(
+        address _pool,
+        uint32 interval,
+        uint8 nSamples,
+        uint256 lowVolThresholdBps,
+        uint256 highVolThresholdBps
+    ) public view returns (uint256 volScore) {
         if (lowVolThresholdBps >= highVolThresholdBps) revert InvalidConfig();
 
-        uint256 vol = this.getRealizedVolatility();
+        uint256 vol = this.getRealizedVolatilityForPool(_pool, interval, nSamples);
 
         if (vol <= lowVolThresholdBps)  return 0;
         if (vol >= highVolThresholdBps) return 100;
@@ -301,8 +331,18 @@ contract TickDerivedRealizedVolatility {
         view
         returns (int256[] memory avgTicks, int256[] memory logReturns)
     {
-        uint32 n = uint32(numSamples);
-        uint32 interval = sampleInterval;
+        return getRawTickDeltasForPool(address(pool), sampleInterval, numSamples);
+    }
+
+    function getRawTickDeltasForPool(address _pool, uint32 interval, uint8 nSamples)
+        public
+        view
+        returns (int256[] memory avgTicks, int256[] memory logReturns)
+    {
+        if (_pool == address(0)) revert InvalidConfig();
+        IUniswapV3PoolTDRV targetPool = IUniswapV3PoolTDRV(_pool);
+
+        uint32 n = uint32(nSamples);
 
         uint32[] memory secondsAgos = new uint32[](n + 1);
         for (uint32 i = 0; i <= n; ) {
@@ -310,7 +350,12 @@ contract TickDerivedRealizedVolatility {
             unchecked { ++i; }
         }
 
-        (int56[] memory tickCumulatives, ) = pool.observe(secondsAgos);
+        int56[] memory tickCumulatives;
+        try targetPool.observe(secondsAgos) returns (int56[] memory tcs, uint160[] memory) {
+            tickCumulatives = tcs;
+        } catch {
+            revert InsufficientObservationHistory();
+        }
 
         avgTicks = new int256[](n);
         for (uint32 i = 0; i < n; ) {
@@ -351,7 +396,11 @@ contract TickDerivedRealizedVolatility {
 
     /// @notice Returns the current volatility regime based on realized vol.
     function getVolatilityRegime() external view returns (VolatilityRegime) {
-        uint256 vol = this.getRealizedVolatility();
+        return getVolatilityRegimeForPool(address(pool), sampleInterval, numSamples);
+    }
+
+    function getVolatilityRegimeForPool(address _pool, uint32 interval, uint8 nSamples) public view returns (VolatilityRegime) {
+        uint256 vol = this.getRealizedVolatilityForPool(_pool, interval, nSamples);
         if (vol <= REGIME_CALM_MAX)     return VolatilityRegime.CALM;
         if (vol <= REGIME_NORMAL_MAX)   return VolatilityRegime.NORMAL;
         if (vol <= REGIME_ELEVATED_MAX) return VolatilityRegime.ELEVATED;
@@ -383,10 +432,19 @@ contract TickDerivedRealizedVolatility {
         view
         returns (uint256 ewmaVolBps)
     {
-        if (lambdaBps == 0 || lambdaBps >= 10_000) revert InvalidConfig();
+        return getVolatilityEWMAForPool(address(pool), sampleInterval, numSamples, lambdaBps);
+    }
 
-        uint32 n = uint32(numSamples);
-        uint32 interval = sampleInterval;
+    function getVolatilityEWMAForPool(address _pool, uint32 interval, uint8 nSamples, uint256 lambdaBps)
+        public
+        view
+        returns (uint256 ewmaVolBps)
+    {
+        if (lambdaBps == 0 || lambdaBps >= 10_000) revert InvalidConfig();
+        if (_pool == address(0)) revert InvalidConfig();
+
+        IUniswapV3PoolTDRV targetPool = IUniswapV3PoolTDRV(_pool);
+        uint32 n = uint32(nSamples);
         uint256 BPS_SCALE = 10_000;
 
         uint32[] memory secondsAgos = new uint32[](n + 1);
@@ -395,7 +453,12 @@ contract TickDerivedRealizedVolatility {
             unchecked { ++i; }
         }
 
-        (int56[] memory tickCumulatives, ) = pool.observe(secondsAgos);
+        int56[] memory tickCumulatives;
+        try targetPool.observe(secondsAgos) returns (int56[] memory tcs, uint160[] memory) {
+            tickCumulatives = tcs;
+        } catch {
+            revert InsufficientObservationHistory();
+        }
 
         // Compute N avg ticks.
         int256[] memory avgTicks = new int256[](n);
@@ -453,6 +516,15 @@ contract TickDerivedRealizedVolatility {
         view
         returns (uint256 annualizedVolBps, bool success)
     {
+        return getVolatilityOverWindowForPool(address(pool), windowSeconds, nSamples);
+    }
+
+    function getVolatilityOverWindowForPool(address _pool, uint32 windowSeconds, uint8 nSamples)
+        public
+        view
+        returns (uint256 annualizedVolBps, bool success)
+    {
+        if (_pool == address(0)) revert InvalidConfig();
         if (nSamples < MIN_SAMPLES || nSamples > MAX_SAMPLES) revert InvalidConfig();
         uint32 interval = windowSeconds / uint32(nSamples);
         if (interval < MIN_SAMPLE_INTERVAL) revert SampleIntervalTooShort();
@@ -464,7 +536,7 @@ contract TickDerivedRealizedVolatility {
         }
 
         int56[] memory tickCumulatives;
-        try pool.observe(secondsAgos) returns (int56[] memory tcs, uint160[] memory) {
+        try IUniswapV3PoolTDRV(_pool).observe(secondsAgos) returns (int56[] memory tcs, uint160[] memory) {
             tickCumulatives = tcs;
         } catch {
             return (0, false);

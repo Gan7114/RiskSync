@@ -80,15 +80,17 @@ contract ForkTests is Test {
             1_000_000_00,     // $1M low threshold (8 dec)
             100_000_000_00,   // $100M high threshold (8 dec)
             AAVE_DATA_PROV,
-            WETH              // query Aave for WETH variable borrow rate
+            WETH,              // query Aave for WETH variable borrow rate
+            18
         );
 
         // ── Deploy TickDerivedRealizedVolatility ──────────────────────────────
-        // 1-hour intervals, 24 samples → 24-hour realized vol window.
+        // 5-min intervals, 24 samples → 2-hour realized vol window.
+        // (Mainnet WETH/USDC 0.05% pool currently limits cardinality to ~2.4 hours)
         tdrv = new TickDerivedRealizedVolatility(
             WETH_USDC_POOL,
-            3600,  // 1-hour sample interval
-            24     // 24 samples (min 3, max 48)
+            300,   // 5-min sample interval
+            24     // 24 samples
         );
 
         // ── Deploy CrossProtocolCascadeScore ──────────────────────────────────
@@ -335,8 +337,9 @@ contract ForkTests is Test {
         StressScenarioRegistry ssr = new StressScenarioRegistry(
             address(mco), address(tdrv), address(cplcs)
         );
+        console2.log("--- B. Stress Scenario Results (Black Thursday) ---");
         StressScenarioRegistry.ScenarioResult memory r =
-            ssr.runScenario(ssr.BLACK_THURSDAY_2020(), WETH);
+            ssr.runScenario(ssr.BLACK_THURSDAY_2020(), WETH_USDC_POOL, ETH_USD_FEED, WETH);
         assertEq(r.scenarioId, ssr.BLACK_THURSDAY_2020(), "scenario ID must match");
         assertLe(r.compositeRiskScore, 100, "composite score bounded");
         assertGe(r.recommendedLtvBps, 5_000, "LTV must be >= 50%");

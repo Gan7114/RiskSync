@@ -7,13 +7,15 @@ out/
 /broadcast/*/31337/
 /broadcast/**/dry-run/
 
-# Docs
-docs/
+# Docs (Must be committed for hackathon submission!)
+# docs/
 
 # Dotenv file
 .env
+dashboard/.env.local
 
-# Node modules
+# Node modules & build artifacts
 node_modules/
-dashboard/.next/
 dashboard/node_modules/
+dashboard/.next/
+dashboard/tsconfig.tsbuildinfo

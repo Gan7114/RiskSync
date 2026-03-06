@@ -108,4 +108,18 @@ export interface OracleSnapshot {
   blockNumber: number;
   timestamp: number;
   tick: number;
+  asset: string;
 }
+
+export interface Asset {
+  symbol: string;
+  name: string;
+}
+
+export const SUPPORTED_ASSETS: Asset[] = [
+  { symbol: "ETH", name: "Ethereum" },
+  { symbol: "BTC", name: "Bitcoin" },
+  { symbol: "LINK", name: "Chainlink" },
+  { symbol: "UNI", name: "Uniswap" },
+  { symbol: "AAVE", name: "Aave" },
+];

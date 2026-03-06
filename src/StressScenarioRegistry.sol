@@ -26,11 +26,22 @@ interface IManipulationCostOracleSSR {
         external
         view
         returns (uint256 costUsd, uint256 securityScore);
+        
+    function getManipulationCostForPool(address pool, address feed, uint256 targetDeviationBps)
+        external
+        view
+        returns (uint256 costUsd, uint256 securityScore);
 }
 
 interface ITickDerivedRealizedVolatilitySSR {
     function getRealizedVolatility() external view returns (uint256);
     function getVolatilityScore(uint256 lowBps, uint256 highBps)
+        external
+        view
+        returns (uint256);
+        
+    function getRealizedVolatilityForPool(address pool, uint32 interval, uint8 nSamples) external view returns (uint256);
+    function getVolatilityScoreForPool(address pool, uint32 interval, uint8 nSamples, uint256 lowBps, uint256 highBps)
         external
         view
         returns (uint256);
@@ -235,9 +246,11 @@ contract StressScenarioRegistry {
 
     /// @notice Runs a single named scenario against current on-chain state.
     /// @param scenarioId  One of the 5 built-in constants or a custom scenario ID.
+    /// @param pool        The UniswapV3 pool to analyze.
+    /// @param feed        The Chainlink price feed for the asset.
     /// @param asset       The tracked asset address (e.g. WETH) passed to CPLCS.
     /// @return result     Full ScenarioResult struct with all risk metrics.
-    function runScenario(bytes32 scenarioId, address asset)
+    function runScenario(bytes32 scenarioId, address pool, address feed, address asset)
         external
         view
         returns (ScenarioResult memory result)
@@ -250,7 +263,7 @@ contract StressScenarioRegistry {
         // ------------------------------------------------------------------
         uint256 costUsd;
         uint256 mcoScore;
-        try mco.getManipulationCost(s.mcoDeviationBps) returns (uint256 c, uint256 sc) {
+        try mco.getManipulationCostForPool(pool, feed, s.mcoDeviationBps) returns (uint256 c, uint256 sc) {
             costUsd = c;
             mcoScore = sc;
         } catch {
@@ -263,10 +276,10 @@ contract StressScenarioRegistry {
         // ------------------------------------------------------------------
         uint256 volBps;
         uint256 tdrvScore;
-        try tdrv.getRealizedVolatility() returns (uint256 v) {
+        try tdrv.getRealizedVolatilityForPool(pool, 60, 60) returns (uint256 v) {
             volBps = v;
         } catch {}
-        try tdrv.getVolatilityScore(VOL_LOW_BPS, VOL_HIGH_BPS) returns (uint256 vs) {
+        try tdrv.getVolatilityScoreForPool(pool, 60, 60, VOL_LOW_BPS, VOL_HIGH_BPS) returns (uint256 vs) {
             tdrvScore = vs;
         } catch {
             tdrvScore = 100;
@@ -311,25 +324,25 @@ contract StressScenarioRegistry {
 
     /// @notice Runs all registered scenarios and returns an array of results.
     /// @dev    Gas-intensive — intended for off-chain `eth_call`, not on-chain use.
-    function runAllScenarios(address asset)
+    function runAllScenarios(address pool, address feed, address asset)
         external
         view
         returns (ScenarioResult[] memory results)
     {
         results = new ScenarioResult[](scenarioIds.length);
         for (uint256 i = 0; i < scenarioIds.length; i++) {
-            results[i] = this.runScenario(scenarioIds[i], asset);
+            results[i] = this.runScenario(scenarioIds[i], pool, feed, asset);
         }
     }
 
     /// @notice Runs all scenarios and returns the one with the highest composite score.
-    function worstCaseScenario(address asset)
+    function worstCaseScenario(address pool, address feed, address asset)
         external
         view
         returns (ScenarioResult memory worst, bytes32 worstId)
     {
         for (uint256 i = 0; i < scenarioIds.length; i++) {
-            ScenarioResult memory r = this.runScenario(scenarioIds[i], asset);
+            ScenarioResult memory r = this.runScenario(scenarioIds[i], pool, feed, asset);
             if (r.compositeRiskScore > worst.compositeRiskScore) {
                 worst = r;
                 worstId = scenarioIds[i];

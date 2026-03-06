@@ -10,6 +10,11 @@ interface IManipulationCostOracle {
         external
         view
         returns (uint256 costUsd, uint256 securityScore);
+
+    function getManipulationCostForPool(address pool, address feed, uint256 targetDeviationBps)
+        external
+        view
+        returns (uint256 costUsd, uint256 securityScore);
 }
 
 interface ITickDerivedRealizedVolatility {
@@ -19,6 +24,16 @@ interface ITickDerivedRealizedVolatility {
     ) external view returns (uint256 volScore);
 
     function getRealizedVolatility() external view returns (uint256 annualizedVolBps);
+
+    function getVolatilityScoreForPool(
+        address pool,
+        uint32 interval,
+        uint8 nSamples,
+        uint256 lowVolThresholdBps,
+        uint256 highVolThresholdBps
+    ) external view returns (uint256 volScore);
+
+    function getRealizedVolatilityForPool(address pool, uint32 interval, uint8 nSamples) external view returns (uint256 annualizedVolBps);
 }
 
 interface ICrossProtocolCascadeScore {
@@ -42,6 +57,8 @@ interface ITickConcentrationOracle {
     /// @notice Returns the composite 0-100 manipulation concentration risk score.
     ///         0 = organic (high entropy). 100 = fully concentrated (zero entropy).
     function getConcentrationScore() external view returns (uint256);
+
+    function getConcentrationScoreForPool(address pool, uint32 windowSeconds, uint8 numSamples) external view returns (uint256);
 }
 
 /// @title UnifiedRiskCompositor
@@ -398,6 +415,114 @@ contract UnifiedRiskCompositor {
         realizedVolBps      = lastRealizedVolBps;
         manipulationCostUsd = lastManipulationCostUsd;
         updatedAt           = lastUpdatedAt;
+    }
+
+    /// @notice Returns a full breakdown of the risk state for an arbitrary pool/feed pair.
+    /// @dev Uses the compositor's tracked asset for cascade modeling (default behavior).
+    function getScoreForAsset(address pool, address feed)
+        external
+        view
+        returns (
+            uint256 compositeScore,
+            uint256 mcoInput,
+            uint256 tdrvInput,
+            uint256 cpInput,
+            RiskTier tier,
+            uint256 recommendedLtv,
+            uint256 realizedVolBps,
+            uint256 manipulationCostUsd,
+            uint256 tcoInput
+        )
+    {
+        return _getScoreForAsset(pool, feed, trackedAsset);
+    }
+
+    /// @notice Returns a full breakdown for an arbitrary pool/feed pair with explicit cascade asset.
+    /// @dev    Useful when the pool under analysis differs from the collateral asset used in CPLCS.
+    function getScoreForAsset(address pool, address feed, address cascadeAsset)
+        external
+        view
+        returns (
+            uint256 compositeScore,
+            uint256 mcoInput,
+            uint256 tdrvInput,
+            uint256 cpInput,
+            RiskTier tier,
+            uint256 recommendedLtv,
+            uint256 realizedVolBps,
+            uint256 manipulationCostUsd,
+            uint256 tcoInput
+        )
+    {
+        if (cascadeAsset == address(0)) revert ZeroAddress();
+        return _getScoreForAsset(pool, feed, cascadeAsset);
+    }
+
+    function _getScoreForAsset(address pool, address feed, address cascadeAsset)
+        internal
+        view
+        returns (
+            uint256 compositeScore,
+            uint256 mcoInput,
+            uint256 tdrvInput,
+            uint256 cpInput,
+            RiskTier tier,
+            uint256 recommendedLtv,
+            uint256 realizedVolBps,
+            uint256 manipulationCostUsd,
+            uint256 tcoInput
+        )
+    {
+        // ── 1. MCO for specified pool and feed ──────────────────────────────
+        mcoInput = 100;
+        try mco.getManipulationCostForPool(pool, feed, DEFAULT_DEVIATION_BPS) returns (
+            uint256 costUsd,
+            uint256 securityScore
+        ) {
+            mcoInput = 100 - Math.min(securityScore, 100);
+            manipulationCostUsd = costUsd;
+        } catch {}
+
+        // ── 2. TDRV for specified pool ──────────────────────────────────────
+        tdrvInput = 100;
+        // Using same defaults as constructor deployments: 60s interval, 60 samples = 1 hr window.
+        try tdrv.getVolatilityScoreForPool(pool, 60, 60, LOW_VOL_THRESHOLD_BPS, HIGH_VOL_THRESHOLD_BPS) returns (
+            uint256 volScore
+        ) {
+            tdrvInput = volScore;
+        } catch {}
+        try tdrv.getRealizedVolatilityForPool(pool, 60, 60) returns (uint256 vol) {
+            realizedVolBps = vol;
+        } catch {}
+
+        // ── 3. CPLCS: cross protocol cascade ────────────────────────────────
+        cpInput = 100;
+        try cplcs.getCascadeScore(cascadeAsset, DEFAULT_SHOCK_BPS) returns (
+            ICrossProtocolCascadeScore.CascadeResult memory result
+        ) {
+            cpInput = result.cascadeScore;
+        } catch {}
+
+        // ── 4. TCO for specified pool ───────────────────────────────────────
+        tcoInput = 0;
+        if (address(tco) != address(0)) {
+            // Using typical defaults: 24h window (86400s), 24 samples.
+            try tco.getConcentrationScoreForPool(pool, 86400, 24) returns (uint256 cScore) {
+                tcoInput = cScore;
+            } catch {
+                tcoInput = 50;
+            }
+        }
+
+        uint256 w1 = uint256(mcoWeight);
+        uint256 w2 = uint256(tdrvWeight);
+        uint256 w3 = uint256(cpWeight);
+        uint256 w4 = uint256(tcoWeight);
+        uint256 totalW = w1 + w2 + w3 + w4;
+
+        compositeScore = (mcoInput * w1 + tdrvInput * w2 + cpInput * w3 + tcoInput * w4) / totalW;
+        tier           = _scoreToTier(compositeScore);
+        recommendedLtv = _tierToLtv(tier);
     }
 
     // ─── Score History & Momentum ────────────────────────────────────────────
