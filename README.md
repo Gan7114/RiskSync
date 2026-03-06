@@ -2,7 +2,9 @@
 
 **Chainlink Convergence 2026 Hackathon Submission — Risk & Compliance Track**
 
-On-chain risk middleware for DeFi — twelve composable contracts that measure oracle manipulation cost, realized volatility, cross-protocol liquidation cascades, and tick-sequence entropy. It now includes a true multi-asset registry/router layer so ETH/BTC/LINK/AAVE can share one protocol deployment.
+is an on-chain risk middleware protocol for DeFi, originally built for the Chainlink Convergence 2026 Hackathon (Risk & Compliance Track). Its core purpose is to solve the "Risk Visibility Gap" by providing a comprehensive, composable risk score that dynamically assesses market health and protects lending protocols, AMMs, or vaults from manipulation.
+
+It features a Multi-Asset Architecture allowing a single protocol deployment to cover multiple collateral assets (ETH, BTC, LINK, AAVE) via an AssetRegistry and MultiAssetRiskRouter.
 
 ## 🎖 Hackathon Submission (March 2026)
 
