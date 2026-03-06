@@ -2,9 +2,14 @@
 
 **Chainlink Convergence 2026 Hackathon Submission — Risk & Compliance Track**
 
-is an on-chain risk middleware protocol for DeFi, originally built for the Chainlink Convergence 2026 Hackathon (Risk & Compliance Track). Its core purpose is to solve the "Risk Visibility Gap" by providing a comprehensive, composable risk score that dynamically assesses market health and protects lending protocols, AMMs, or vaults from manipulation.
+RiskSync is a multi-asset, on-chain risk orchestration layer for DeFi protocols.  
+It continuously measures four live risk vectors and turns them into actionable protocol defense:
+- Oracle manipulation cost (MCO)
+- Realized volatility stress (TDRV)
+- Cross-protocol liquidation cascade pressure (CPLCS)
+- Tick concentration entropy anomalies (TCO)
 
-It features a Multi-Asset Architecture allowing a single protocol deployment to cover multiple collateral assets (ETH, BTC, LINK, AAVE) via an AssetRegistry and MultiAssetRiskRouter.
+From a single deployment, RiskSync monitors assets like ETH, BTC, LINK, and AAVE through config-only onboarding (`AssetRegistry` + `MultiAssetRiskRouter`), computes a composite score, recommends dynamic LTV, and can trigger automated protective actions through Chainlink services.
 
 ## 🎖 Hackathon Submission (March 2026)
 
