@@ -1,4 +1,10 @@
 {
+  "scripts": {
+    "vercel-build": "npm --prefix dashboard install && npm --prefix dashboard run build",
+    "build": "npm run vercel-build",
+    "dev": "npm --prefix dashboard run dev",
+    "start": "npm --prefix dashboard run start"
+  },
   "dependencies": {
     "@chainlink/contracts-ccip": "^1.6.4",
     "@chainlink/cre-sdk": "^1.1.3",
