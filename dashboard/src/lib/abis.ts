@@ -74,7 +74,10 @@ export const CIRCUIT_BREAKER_ABI = [
 
 export const CVO_ABI = [
   "function priceFeed() view returns (address)",
+  "function numSamples() view returns (uint8)",
   "function getPriceFeedDetails() view returns (string memory description, uint8 decimals, uint256 latestPrice, uint80 latestRoundId)",
+  "function getPriceFeedDetailsForFeed(address feed) view returns (string memory description, uint8 decimals, uint256 latestPrice, uint80 latestRoundId)",
+  "function getFullReportForFeed(address feed, uint8 samples) view returns (uint256 annualizedVolBps, uint8 numRoundsUsed, uint256 oldestRoundAge, uint256 latestPrice, uint80 latestRoundId, uint8 regime)",
   "function getVolatilityWithConfidence() view returns (uint256 annualizedVolBps, uint8 numRoundsUsed, uint256 oldestRoundAge, uint256 latestPrice, uint80 latestRoundId)",
   "function getVolatilityWithConfidence(uint8 numRounds, uint32 maxStalenessSecs) view returns (uint256 annualizedVolBps, uint256 numRoundsUsed, uint256 oldestRoundAgeSeconds)",
   "function getVolatility() view returns (uint256 annualizedVolBps)",

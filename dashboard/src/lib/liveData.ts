@@ -27,14 +27,49 @@ const REGIME_MAP: VolatilityRegime[] = ["CALM", "NORMAL", "ELEVATED", "STRESS", 
 const MOMENTUM_MAP: ScoreMomentum[] = ["PLUNGING", "FALLING", "STABLE", "RISING", "SPIKING"];
 const USD_SCALE = BigInt(100_000_000);
 
-const ADDRESS_METADATA: Record<string, { symbol: string; name: string }> = {
-  "0xc02aa39b223fe8d0a0e5c4f27ead9083c756cc2": { symbol: "ETH", name: "Ethereum" },
-  "0x7b79995e5f793a07bc00c21412e50ecae098e7f9": { symbol: "ETH", name: "Ethereum" },
-  "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": { symbol: "BTC", name: "Bitcoin" },
-  "0x517f2982701695d4e52f1ecfbef3ba31df470161": { symbol: "BTC", name: "Bitcoin" },
-  "0x514910771af9ca656af840dff83e8264ecf986ca": { symbol: "LINK", name: "Chainlink" },
-  "0x779877a7b0d9e8603169ddbd7836e478b4624789": { symbol: "LINK", name: "Chainlink" },
-  "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9": { symbol: "AAVE", name: "Aave" },
+const DEFAULT_ASSET_USD_FEEDS: Record<string, string> = {
+  ETH: process.env.NEXT_PUBLIC_ETH_USD_FEED ?? "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+  BTC: process.env.NEXT_PUBLIC_BTC_USD_FEED ?? "0x1b44F3514812d835EB1BDB0acB33d3fA3351Ee43",
+  LINK: process.env.NEXT_PUBLIC_LINK_USD_FEED ?? "0xc59E3633BAAC79493d908e63626716e204A45EdF",
+  AAVE: process.env.NEXT_PUBLIC_AAVE_USD_FEED ?? "",
+};
+
+const ADDRESS_METADATA: Record<string, { symbol: string; name: string; priceFeed?: string }> = {
+  "0xc02aa39b223fe8d0a0e5c4f27ead9083c756cc2": {
+    symbol: "ETH",
+    name: "Ethereum",
+    priceFeed: DEFAULT_ASSET_USD_FEEDS.ETH,
+  },
+  "0x7b79995e5f793a07bc00c21412e50ecae098e7f9": {
+    symbol: "ETH",
+    name: "Ethereum",
+    priceFeed: DEFAULT_ASSET_USD_FEEDS.ETH,
+  },
+  "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": {
+    symbol: "BTC",
+    name: "Bitcoin",
+    priceFeed: DEFAULT_ASSET_USD_FEEDS.BTC,
+  },
+  "0x517f2982701695d4e52f1ecfbef3ba31df470161": {
+    symbol: "BTC",
+    name: "Bitcoin",
+    priceFeed: DEFAULT_ASSET_USD_FEEDS.BTC,
+  },
+  "0x514910771af9ca656af840dff83e8264ecf986ca": {
+    symbol: "LINK",
+    name: "Chainlink",
+    priceFeed: DEFAULT_ASSET_USD_FEEDS.LINK,
+  },
+  "0x779877a7b0d9e8603169ddbd7836e478b4624789": {
+    symbol: "LINK",
+    name: "Chainlink",
+    priceFeed: DEFAULT_ASSET_USD_FEEDS.LINK,
+  },
+  "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9": {
+    symbol: "AAVE",
+    name: "Aave",
+    priceFeed: DEFAULT_ASSET_USD_FEEDS.AAVE,
+  },
 };
 
 const ERC20_META_ABI = [
@@ -80,6 +115,20 @@ function regimeFromVol(volBps: number): VolatilityRegime {
   if (volBps > 5000) return "ELEVATED";
   if (volBps > 2000) return "NORMAL";
   return "CALM";
+}
+
+function canonicalAssetSymbol(symbol: string | undefined): string {
+  const base = String(symbol ?? "ASSET").split("-")[0].trim().toUpperCase();
+  return base.length > 0 ? base : "ASSET";
+}
+
+function resolveAssetUsdFeed(assetSymbol: string | undefined, assetAddress: string | undefined): string {
+  const lower = String(assetAddress ?? "").toLowerCase();
+  const known = ADDRESS_METADATA[lower]?.priceFeed;
+  if (known) return known;
+
+  const symbol = canonicalAssetSymbol(assetSymbol);
+  return DEFAULT_ASSET_USD_FEEDS[symbol] ?? "";
 }
 
 let _provider: ethers.JsonRpcProvider | null = null;
@@ -486,8 +535,11 @@ async function applyChainlinkPanelData(
   preferredFeedAddress: string = ""
 ): Promise<void> {
   const nowTs = Math.floor(Date.now() / 1000);
+  const assetSymbol = canonicalAssetSymbol(result.asset);
+  const assetFeedAddress = resolveAssetUsdFeed(result.asset, result.assetAddress);
+  const canUseEthOnlyFallback = assetSymbol === "ETH";
 
-  let feedDescription = result.asset ? `${result.asset} / USD` : "ASSET / USD";
+  let feedDescription = `${assetSymbol} / USD`;
   let feedPrice = 0;
   let feedRoundId = 0;
   let feedUpdatedAt = 0;
@@ -504,6 +556,7 @@ async function applyChainlinkPanelData(
   let ccipBroadcasts = 0;
   let destinationCount = 3;
   let broadcastThreshold = 2;
+  let assetFeedLoaded = false;
 
   const tryReadFeed = async (feedAddress: string): Promise<boolean> => {
     if (!feedAddress || feedAddress === ethers.ZeroAddress) return false;
@@ -524,6 +577,7 @@ async function applyChainlinkPanelData(
       feedPrice = Number(answer) / Math.pow(10, decimals);
       feedRoundId = toDisplayRoundId(latest[0] as bigint);
       feedUpdatedAt = Number(latest[3] as bigint);
+      numRoundsUsed = Math.max(numRoundsUsed, 1);
       return true;
     } catch {
       return false;
@@ -531,37 +585,79 @@ async function applyChainlinkPanelData(
   };
 
   let cvoFeedAddress = "";
+  let cvo: ethers.Contract | null = null;
+  let cvoSampleCount = 12;
   if (ADDRESSES.CVO) {
     try {
-      const cvo = new ethers.Contract(ADDRESSES.CVO, CVO_ABI, provider) as any;
-      cvoFeedAddress = String(await cvo.priceFeed());
+      const cvoContract = new ethers.Contract(ADDRESSES.CVO, CVO_ABI, provider) as any;
+      cvo = cvoContract;
+      const [baseFeed, samples] = await Promise.all([
+        cvoContract.priceFeed(),
+        cvoContract.numSamples().catch(() => BigInt(12)),
+      ]);
+      cvoFeedAddress = String(baseFeed);
+      cvoSampleCount = Math.max(4, bn(samples as bigint));
     } catch {
       // noop
     }
   }
 
-  const preferredLoaded = await tryReadFeed(preferredFeedAddress);
-  if (!preferredLoaded) {
-    await tryReadFeed(cvoFeedAddress);
+  const tryReadFeedReport = async (feedAddress: string): Promise<boolean> => {
+    if (!cvo || !feedAddress || feedAddress === ethers.ZeroAddress) return false;
+
+    try {
+      const [details, report] = await Promise.all([
+        cvo.getPriceFeedDetailsForFeed(feedAddress),
+        cvo.getFullReportForFeed(feedAddress, BigInt(cvoSampleCount)),
+      ]);
+
+      feedDescription = String(details[0]);
+      const decimals = Number(details[1] as bigint | number);
+      const latestPrice = Number(details[2] as bigint);
+      feedPrice = latestPrice / Math.pow(10, decimals);
+      feedRoundId = toDisplayRoundId(details[3] as bigint);
+      cvoVolBps = bn(report[0] as bigint);
+      numRoundsUsed = bn(report[1] as bigint);
+      oldestRoundAgeHours = Math.max(0, Math.round(bn(report[2] as bigint) / 3600));
+      assetFeedLoaded = true;
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  if (assetFeedAddress) {
+    assetFeedLoaded = await tryReadFeedReport(assetFeedAddress);
+    if (!assetFeedLoaded) {
+      assetFeedLoaded = await tryReadFeed(assetFeedAddress);
+    }
   }
 
-  if (ADDRESSES.CVO) {
-    const cvo = new ethers.Contract(ADDRESSES.CVO, CVO_ABI, provider) as any;
+  if (!assetFeedLoaded && canUseEthOnlyFallback) {
+    const preferredLoaded = await tryReadFeedReport(preferredFeedAddress) || await tryReadFeed(preferredFeedAddress);
+    if (!preferredLoaded) {
+      await tryReadFeedReport(cvoFeedAddress) || await tryReadFeed(cvoFeedAddress);
+    }
+  }
+
+  if (ADDRESSES.CVO && canUseEthOnlyFallback) {
     try {
       let oldestRoundAgeSecs = 0;
-      try {
-        const latest = await cvo.getVolatilityWithConfidence();
-        cvoVolBps = bn(latest[0] as bigint);
-        numRoundsUsed = bn(latest[1] as bigint);
-        oldestRoundAgeSecs = bn(latest[2] as bigint);
-      } catch {
+      if (cvo && cvoVolBps === 0) {
         try {
-          const legacy = await cvo["getVolatilityWithConfidence(uint8,uint32)"](BigInt(12), BigInt(90_000));
-          cvoVolBps = bn(legacy[0] as bigint);
-          numRoundsUsed = bn(legacy[1] as bigint);
-          oldestRoundAgeSecs = bn(legacy[2] as bigint);
+          const latest = await cvo.getVolatilityWithConfidence();
+          cvoVolBps = bn(latest[0] as bigint);
+          numRoundsUsed = bn(latest[1] as bigint);
+          oldestRoundAgeSecs = bn(latest[2] as bigint);
         } catch {
-          cvoVolBps = bn(await cvo.getVolatility());
+          try {
+            const legacy = await cvo["getVolatilityWithConfidence(uint8,uint32)"](BigInt(cvoSampleCount), BigInt(90_000));
+            cvoVolBps = bn(legacy[0] as bigint);
+            numRoundsUsed = bn(legacy[1] as bigint);
+            oldestRoundAgeSecs = bn(legacy[2] as bigint);
+          } catch {
+            cvoVolBps = bn(await cvo.getVolatility());
+          }
         }
       }
 

@@ -36,7 +36,7 @@ export default function StressPanel({ scenarios }: Props) {
         </div>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto overflow-y-visible [overscroll-behavior-x:contain] [overscroll-behavior-y:auto]">
         <table className="w-full text-xs font-mono">
           <thead>
             <tr className="text-[10px] text-slate-600 tracking-wider">

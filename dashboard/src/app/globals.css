@@ -17,6 +17,15 @@ html, body {
   color: #e2e8f0;
   font-family: 'JetBrains Mono', monospace;
   overflow-x: hidden;
+  overflow-y: auto;
+  min-height: 100%;
+  height: auto;
+  overscroll-behavior-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+body {
+  touch-action: pan-y;
 }
 
 /* Scrollbar */

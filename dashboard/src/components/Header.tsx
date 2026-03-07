@@ -34,10 +34,10 @@ export default function Header({ data, simMode, assets, activeAsset, setActiveAs
         </div>
         <div>
           <div className="text-sm font-bold text-white tracking-widest">
-            DEFI<span className="text-indigo-400">STRESS</span>ORACLE
+            RISK<span className="text-indigo-400">SYNC</span>
           </div>
           <div className="text-[10px] text-slate-500 tracking-wider">
-            4-PILLAR RISK MIDDLEWARE
+            MULTI-ASSET RISK ORCHESTRATION
           </div>
         </div>
       </div>

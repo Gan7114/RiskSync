@@ -180,7 +180,7 @@ const readRouterState = (runtime: Runtime<Config>, asset: Address): RouterState 
         abi: MULTI_ASSET_ROUTER_ABI,
         functionName: "assetRiskState",
         data: bytesToHex(result.data),
-    }) as readonly [bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint];
+    }) as readonly [bigint, bigint, bigint, bigint, bigint, number, bigint, bigint, bigint, bigint, bigint];
 
     return {
         score: Number(decoded[0]),
@@ -203,7 +203,7 @@ const readCircuitBreakerLevel = (runtime: Runtime<Config>): number => {
         abi: CIRCUIT_BREAKER_ABI,
         functionName: "currentLevel",
         data: bytesToHex(result.data),
-    }) as bigint;
+    }) as number;
     return Number(decoded);
 };
 
@@ -313,7 +313,7 @@ const onTrigger = async (runtime: Runtime<Config>): Promise<WorkflowOutput> => {
         decisions.push(decision);
         runtime.log(
             `[${decision.symbol}] score=${decision.onchainScore} tier=${decision.onchainTier} `
-                + `vol24h=${decision.offchainVolatilityPct.toFixed(2)}% severity=${decision.severity}`,
+            + `vol24h=${decision.offchainVolatilityPct.toFixed(2)}% severity=${decision.severity}`,
         );
     }
 
@@ -352,7 +352,7 @@ const onTrigger = async (runtime: Runtime<Config>): Promise<WorkflowOutput> => {
 
     runtime.log(
         `global severity=${output.globalSeverity} action=${output.recommendedAction} `
-            + `enabled_assets=${output.enabledAssetCount}`,
+        + `enabled_assets=${output.enabledAssetCount}`,
     );
     return output;
 };

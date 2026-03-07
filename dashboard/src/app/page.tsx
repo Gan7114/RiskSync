@@ -62,7 +62,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen grid-bg">
+    <div className="min-h-screen grid-bg overflow-visible">
       <Header
         data={data}
         simMode={simMode}
@@ -71,7 +71,7 @@ export default function Dashboard() {
         setActiveAsset={setActiveAsset}
       />
 
-      <main className="p-4 lg:p-6 flex flex-col gap-5 max-w-[1600px] mx-auto">
+      <main className="p-4 pb-16 lg:p-6 lg:pb-24 flex flex-col gap-5 max-w-[1600px] mx-auto">
         {!data.assetEnabled && (
           <motion.div
             className="glass gradient-border p-4 text-sm text-amber-200 border border-amber-500/30"
@@ -244,7 +244,7 @@ export default function Dashboard() {
 
         {/* ── Footer ─────────────────────────────────────────────────────── */}
         <div className="text-center text-[10px] text-slate-700 py-4 border-t border-[#1a2744]">
-          DEFISTRESSORACLE · 4-PILLAR ON-CHAIN RISK MIDDLEWARE · MULTI-ASSET REGISTRY ROUTED ·{" "}
+          RISKSYNC · MULTI-ASSET ON-CHAIN RISK ORCHESTRATION · REGISTRY-ROUTED ASSET SAFEGUARDS ·{" "}
           <span className="text-indigo-700">MCO 30% + TDRV 35% + CPLCS 20% + TCO 15%</span>
           {" "}·{" "}
           <span className="text-[#375bd2]">Chainlink Price Feeds + Automation + CCIP</span>

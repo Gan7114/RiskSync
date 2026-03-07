@@ -1,39 +1,220 @@
 # RiskSync
 
-**Chainlink Convergence 2026 Hackathon Submission — Risk & Compliance Track**
+**Chainlink Convergence 2026 Hackathon Submission - Risk & Compliance Track**
 
-RiskSync is a multi-asset, on-chain risk orchestration layer for DeFi protocols.  
-It continuously measures four live risk vectors and turns them into actionable protocol defense:
-- Oracle manipulation cost (MCO)
-- Realized volatility stress (TDRV)
-- Cross-protocol liquidation cascade pressure (CPLCS)
-- Tick concentration entropy anomalies (TCO)
+RiskSync is a multi-asset, on-chain risk orchestration layer for DeFi protocols. It measures four live risk vectors, turns them into a composite score, recommends dynamic LTV, and can trigger automated defensive actions through Chainlink services.
 
-From a single deployment, RiskSync monitors assets like ETH, BTC, LINK, and AAVE through config-only onboarding (`AssetRegistry` + `MultiAssetRiskRouter`), computes a composite score, recommends dynamic LTV, and can trigger automated protective actions through Chainlink services.
+At a high level, RiskSync answers one question:
 
-## 🎖 Hackathon Submission (March 2026)
+> How unsafe is this asset market right now, and what should the protocol do about it?
 
-This project is built for the **Chainlink Convergence 2026 Hackathon**. It leverages the latest **Chainlink Runtime Environment (CRE)** and on-chain risk primitives to solve the $10B "Risk Visibility Gap" in DeFi.
+Instead of relying on static parameters, manual governance, or off-chain dashboards, RiskSync computes risk directly from on-chain liquidity, volatility, cascade exposure, and manipulation fingerprints.
 
-### ⛓️ Key Chainlink Integrations
-- **Automation**: 5-minute decentralized heartbeat for risk updates (`AutomatedRiskUpdater.sol`).
-- **CCIP**: Cross-chain risk alert propagation to Base, Arbitrum, and Optimism.
-- **Price Feeds**: Real-time volatility verification (`ChainlinkVolatilityOracle.sol`).
+## Table of Contents
 
-### ☁️ Cloud Is Required
-This project is intentionally cloud-connected and depends on Chainlink network services:
-- Chainlink Automation (scheduled upkeep execution)
-- Chainlink CCIP (cross-chain risk broadcast)
-- Chainlink CRE workflow execution (`workflows/risk-orchestrator`)
-- RPC access for live Sepolia/Mainnet verification
+- [Why RiskSync Exists](#why-risksync-exists)
+- [What RiskSync Does](#what-risksync-does)
+- [What Is Live Today](#what-is-live-today)
+- [Chainlink Footprint](#chainlink-footprint)
+- [Architecture](#architecture)
+- [Risk Engine](#risk-engine)
+- [Multi-Asset Architecture](#multi-asset-architecture)
+- [Core Contracts](#core-contracts)
+- [Live Sepolia Deployment](#live-sepolia-deployment)
+- [Quickstart](#quickstart)
+- [Verification](#verification)
+- [Deployment](#deployment)
+- [Configuration Reference](#configuration-reference)
+- [Repository Layout](#repository-layout)
+- [Limitations](#limitations)
+- [Additional Docs](#additional-docs)
 
-## Live Demo (Dashboard)
+## Why RiskSync Exists
 
-> Dashboard connects directly to deployed Sepolia contracts — real on-chain risk data, live Chainlink ETH/USD price feed.
+Most DeFi protocols still operate with static risk parameters:
 
-**Deploy to Vercel:** `cd dashboard && vercel --prod` (requires Vercel account)
+- Static collateral factors
+- Slow governance-based emergency response
+- Weak visibility into oracle manipulation cost
+- No native view of cross-protocol liquidation contagion
+- No unified score that can be consumed on-chain
 
-### Sepolia Testnet Contracts (chainId 11155111)
+That breaks down during stress events. A market can move from "fine" to "liquidation spiral" long before governance can react. RiskSync closes that gap by computing a live, on-chain risk score and exposing it to contracts, dashboards, automation, and cross-chain alerting.
+
+## What RiskSync Does
+
+RiskSync combines four risk primitives into one operational layer:
+
+| Layer | What it measures | Why it matters |
+|---|---|---|
+| MCO | Cost to manipulate a Uniswap V3 TWAP | Detects whether oracle security is economically strong or weak |
+| TDRV | Realized volatility from pool observations | Detects fast-moving market stress |
+| CPLCS | Cross-protocol liquidation cascade amplification | Detects systemic contagion risk |
+| TCO | Tick concentration entropy anomalies | Detects manipulation fingerprints before full exploit completion |
+
+Outputs produced by the system:
+
+- Composite risk score from `0` to `100`
+- Risk tier from `NOMINAL` to `EMERGENCY`
+- Recommended LTV band from `80%` down to `50%`
+- On-chain cached risk state per asset
+- Permissionless circuit-breaker triggers
+- Automation-compatible update flow
+- CCIP alert broadcasting
+
+## What Is Live Today
+
+The repo contains both live and simulation-ready components. They are not the same thing, and the README should be explicit about that.
+
+| Component | Status | Notes |
+|---|---|---|
+| Core risk contracts | Live on Sepolia | Core contracts are deployed and readable on-chain |
+| `AssetRegistry` + `MultiAssetRiskRouter` | Live on Sepolia | Multi-asset config and cached risk routing are deployed |
+| Chainlink Automation | Live on Sepolia | `AutomatedRiskUpdater` has a registered upkeep |
+| Chainlink CCIP | Live on Sepolia | Broadcaster integration is deployed and a message was sent |
+| Dashboard | Local and deployable | Reads live contracts when `NEXT_PUBLIC_*` addresses are configured |
+| Chainlink CRE workflow | Compile + simulate ready | Workflow is implemented and verifiable via simulation |
+
+Important boundary:
+
+- The README treats CRE accurately as a workflow integrated into the project and ready for compile/simulate.
+- The current README does **not** claim CRE is part of the currently live on-chain Sepolia execution path unless separately deployed on CRE infrastructure.
+
+## Chainlink Footprint
+
+RiskSync uses multiple Chainlink products as distinct parts of the system:
+
+| Product | Role in RiskSync | File |
+|---|---|---|
+| Chainlink Price Feeds | External price-verification and volatility cross-checking | [`src/ChainlinkVolatilityOracle.sol`](src/ChainlinkVolatilityOracle.sol) |
+| Chainlink Automation | Scheduled risk updates and circuit-breaker execution | [`src/AutomatedRiskUpdater.sol`](src/AutomatedRiskUpdater.sol) |
+| Chainlink CCIP | Cross-chain risk alert routing | [`src/CrossChainRiskBroadcaster.sol`](src/CrossChainRiskBroadcaster.sol) |
+| Chainlink CRE | Risk orchestration workflow over registry/router state | [`workflows/risk-orchestrator/index.ts`](workflows/risk-orchestrator/index.ts) |
+
+## Architecture
+
+```text
+Uniswap V3 pool data + Chainlink feeds + lending protocol exposure
+                |
+                v
+  +-------------------------------------------------------------+
+  | Core Risk Primitives                                        |
+  | - ManipulationCostOracle (MCO)                              |
+  | - TickDerivedRealizedVolatility (TDRV)                      |
+  | - CrossProtocolCascadeScore (CPLCS)                         |
+  | - TickConcentrationOracle (TCO)                             |
+  +-------------------------------------------------------------+
+                |
+                v
+  +-------------------------------------------------------------+
+  | Risk Composition Layer                                      |
+  | - UnifiedRiskCompositor (legacy single-asset path)          |
+  | - AssetRegistry + MultiAssetRiskRouter (current path)       |
+  +-------------------------------------------------------------+
+                |
+        +-------+--------+------------------+
+        |                |                  |
+        v                v                  v
+  Dashboard UI     Automation Upkeep   CCIP Broadcaster
+        |                |                  |
+        +----------------+------------------+
+                         |
+                         v
+                 Protocol Safeguards
+                 - Dynamic LTV
+                 - Borrow pause
+                 - Alert propagation
+
+Off to the side:
+CRE workflow reads registry/router state, enriches with off-chain context,
+computes severity/action, and estimates routing cost for alert workflows.
+```
+
+## Risk Engine
+
+### Composite score
+
+```text
+riskScore = (MCO x 30 + TDRV x 35 + CPLCS x 20 + TCO x 15) / 100
+```
+
+| Pillar | Weight | Purpose |
+|---|---|---|
+| MCO | 30% | Economic security of the oracle path |
+| TDRV | 35% | Market volatility and trend stress |
+| CPLCS | 20% | Systemic liquidation amplification |
+| TCO | 15% | Information-theoretic manipulation detection |
+
+### Score ladder
+
+| Score | Level | Recommended LTV | Typical response |
+|---|---|---|---|
+| 0-24 | `NOMINAL` | 8000 BPS | No intervention |
+| 25-49 | `WATCH` | 7500 BPS | Monitor closely |
+| 50-64 | `WARNING` | 7000 BPS | Tighten collateral parameters |
+| 65-79 | `DANGER` | 6000 BPS | Aggressive protection |
+| 80-100 | `EMERGENCY` | 5000 BPS | Pause sensitive actions such as borrows |
+
+## Multi-Asset Architecture
+
+RiskSync was upgraded from a mostly single-asset design into a true multi-asset system without redeploying the full protocol per token.
+
+### How it works
+
+1. Deploy the four core risk primitives once.
+2. Store per-asset metadata in `AssetRegistry`.
+3. Compute and cache per-asset risk state in `MultiAssetRiskRouter`.
+4. Let Automation update assets in gas-safe batches.
+5. Render only enabled assets in the dashboard.
+
+### `AssetRegistry` fields
+
+Each asset config includes:
+
+- `asset`
+- `pool`
+- `feed`
+- `token1Decimals`
+- `shockBps`
+- `mcoThresholdLow`
+- `mcoThresholdHigh`
+- `enabled`
+
+### Why this matters
+
+- ETH, BTC, LINK, AAVE and future assets share the same deployment.
+- New asset support is a config operation, not a protocol rewrite.
+- Disabled assets are explicit and never shown as fake live in the dashboard.
+- Per-asset decimal handling is preserved in manipulation-cost calculations.
+
+### Current script defaults
+
+| Network | ETH | BTC | LINK | AAVE |
+|---|---|---|---|---|
+| Mainnet deploy script | Enabled | Disabled unless `BTC_UNI_POOL` is set | Disabled unless `LINK_UNI_POOL` is set | Disabled unless `AAVE_UNI_POOL` is set |
+| Sepolia deploy script | Enabled | Disabled unless pool + feed env vars exist | Disabled unless pool + feed env vars exist | Disabled unless pool + feed env vars exist |
+
+## Core Contracts
+
+| Contract | Responsibility | Selected methods |
+|---|---|---|
+| `ManipulationCostOracle` | Computes TWAP manipulation cost from real pool liquidity | `getManipulationCost`, `getManipulationCostMultiWindow` |
+| `TickDerivedRealizedVolatility` | Computes realized vol from pool observations | `getRealizedVolatility`, `getVolatilityRegime` |
+| `CrossProtocolCascadeScore` | Models liquidation contagion across lending systems | `getCascadeScore` |
+| `TickConcentrationOracle` | Measures structured tick concentration and entropy loss | `getConcentrationScore`, `getConcentrationBreakdown` |
+| `UnifiedRiskCompositor` | Legacy single-asset weighted composition path | `updateRiskScore`, `getRiskBreakdown` |
+| `AssetRegistry` | Stores supported-asset config and enabled/disabled state | `getSupportedAssets`, `getConfig`, `getEnabledAssets` |
+| `MultiAssetRiskRouter` | Caches composite risk state per asset | `updateRiskForAsset`, `updateRiskForAssets`, `assetRiskState` |
+| `RiskCircuitBreaker` | Base layer for autonomous on-chain protection | `checkAndRespond`, `currentLevel` |
+| `LendingProtocolCircuitBreaker` | Concrete LTV/pause implementation | `currentMaxLtvBps`, `borrowingPaused` |
+| `StressScenarioRegistry` | Replays historical crisis scenarios | `runScenario`, `runAllScenarios` |
+| `ChainlinkVolatilityOracle` | Verifies volatility using Chainlink price feed history | `getVolatilityWithConfidence`, `getPriceFeedDetails` |
+| `AutomatedRiskUpdater` | Automation-compatible batched updater | `checkUpkeep`, `performUpkeep` |
+| `CrossChainRiskBroadcaster` | Sends and receives CCIP risk payloads | `broadcastToAll`, `estimateFee` |
+
+## Live Sepolia Deployment
+
+### Core contracts
 
 | Contract | Address | Etherscan |
 |---|---|---|
@@ -50,491 +231,232 @@ This project is intentionally cloud-connected and depends on Chainlink network s
 | AutomatedRiskUpdater | `0x473779900D540F0098D4EDf40bD3b94a36f8731C` | [view](https://sepolia.etherscan.io/address/0x473779900D540F0098D4EDf40bD3b94a36f8731C) |
 | CrossChainRiskBroadcaster | `0xFd51A5E98355dC874Bf75EA6ED36Ae159810bFBE` | [view](https://sepolia.etherscan.io/address/0xFd51A5E98355dC874Bf75EA6ED36Ae159810bFBE) |
 
-`AssetRegistry` and `MultiAssetRiskRouter` are included in the upgraded deployment scripts and should be exported to dashboard env vars:
-`NEXT_PUBLIC_ASSET_REGISTRY_ADDRESS`, `NEXT_PUBLIC_MULTI_ASSET_ROUTER_ADDRESS`.
+### External Sepolia dependencies
 
-**External integrations on Sepolia:**
-- Chainlink ETH/USD feed: `0x694AA1769357215DE4FAC081bf1f309aDC325306`
-- Uniswap V3 ETH/USDC pool: `0x6Ce0896eAE6D4BD668fDe41BB784548fb8F59b50`
-- CCIP Router: `0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59`
-- Aave V3 PoolDataProvider: `0x3e9708d80f7B3e43118013075F7e95CE3AB31F31`
+| Dependency | Address |
+|---|---|
+| Chainlink ETH/USD feed | `0x694AA1769357215DE4FAC081bf1f309aDC325306` |
+| Uniswap V3 ETH/USDC pool | `0x6Ce0896eAE6D4BD668fDe41BB784548fb8F59b50` |
+| Chainlink CCIP Router | `0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59` |
+| Aave V3 PoolDataProvider | `0x3e9708d80f7B3e43118013075F7e95CE3AB31F31` |
 
----
+### Live operational proof
 
-## Architecture
+- Automation Upkeep ID: `55979398141976704248916940835648987232607128922315091009692569738181087735824`
+- CCIP message proof: [CCIP Explorer](https://ccip.chain.link/msg/0x214808a8a6990228fb270ccb83ab45d37ddf3b58f3044a6d250889a61528209e)
 
-```
-src/
-├── AssetRegistry.sol                  — Owner-managed per-asset config + enabled/disabled state
-├── MultiAssetRiskRouter.sol           — Per-asset risk cache/router (MCO+TDRV+CPLCS+TCO)
-├── ManipulationCostOracle.sol          — Pillar 1: TWAP attack cost via tick-bitmap walk
-├── TickDerivedRealizedVolatility.sol   — Pillar 2: 24-h realized vol + EWMA + regime
-├── CrossProtocolCascadeScore.sol       — Pillar 3: Aave/Compound/Morpho/Euler cascade
-├── TickConcentrationOracle.sol         — Pillar 4: HHI + Renyi entropy + directional bias
-├── UnifiedRiskCompositor.sol           — Weighted aggregator (4-pillar) + score history
-├── RiskCircuitBreaker.sol              — Abstract base + LendingProtocolCircuitBreaker
-├── StressScenarioRegistry.sol          — 5 historical crisis scenarios + custom support
-├── ChainlinkVolatilityOracle.sol       — Chainlink Price Feeds: historical realized vol
-├── AutomatedRiskUpdater.sol            — Chainlink Automation: 5-min keeper heartbeat
-├── CrossChainRiskBroadcaster.sol       — Chainlink CCIP: cross-chain risk alert relay
-├── interfaces/
-│   └── IRiskConsumer.sol               — IRiskConsumer + IRiskScoreProvider
-└── libraries/
-    └── TickMathLib.sol                 — Shared Uniswap V3 tick <-> sqrtPrice math
+## Quickstart
 
-test/foundry/
-├── NovelSystem.t.sol             — Core system unit tests
-├── MultiAssetArchitecture.t.sol  — Mandatory multi-asset registry/router/upkeep tests
-└── ForkTests.t.sol    — 21 mainnet fork tests (auto-skip when MAINNET_RPC_URL unset)
+### Prerequisites
 
-script/
-├── Deploy.s.sol         — Mainnet deployment + multi-asset registry seed (enable/disable aware)
-└── DeploySepolia.s.sol  — Sepolia deployment + multi-asset registry seed (enable/disable aware)
-```
+- Foundry
+- Node.js / npm
+- Optional RPC URLs for Sepolia or Mainnet fork tests
+- Optional Bun + CRE CLI if you want to compile/simulate the workflow
 
-## Multi-Asset Architecture (No Per-Token Redeploy)
-
-The protocol is now split into:
-
-1. **Primitive oracles** (`MCO`, `TDRV`, `CPLCS`, `TCO`) deployed once.
-2. **`AssetRegistry`** with per-asset config:
-   - `asset`, `pool`, `feed`, `token1Decimals`, `shockBps`
-   - `mcoThresholdLow`, `mcoThresholdHigh`, `enabled`
-3. **`MultiAssetRiskRouter`** that computes and caches `RiskState` per asset:
-   - `score`, `tier`, `recommendedLtv`, `updatedAt`
-   - component inputs (`mcoInput`, `tdrvInput`, `cpInput`, `tcoInput`)
-4. **`AutomatedRiskUpdater`** batch cursor for gas-safe N-asset updates per upkeep call.
-
-This means one protocol deployment can cover multiple collateral assets. Adding a token is now a config update, not a full contract redeploy.
-
-### Configured Asset Reality (Current Script Defaults)
-
-| Network | ETH | BTC | LINK | AAVE |
-|---|---|---|---|---|
-| Mainnet script default | Enabled | Disabled unless `BTC_UNI_POOL` env is set | Disabled unless `LINK_UNI_POOL` env is set | Disabled unless `AAVE_UNI_POOL` env is set |
-| Sepolia script default | Enabled | Disabled unless env pool+feed are set | Disabled unless env pool+feed are set | Disabled unless env pool+feed are set |
-
-Disabled assets are explicitly marked disabled in registry and dashboard (not shown as fake live).
-
-## Composite Score Formula
-
-```
-riskScore = (MCO x 30 + TDRV x 35 + CPLCS x 20 + TCO x 15) / 100
-```
-
-| Pillar | Weight | What it measures |
-|--------|--------|------------------|
-| MCO   | 30% | Economic cost to manipulate the TWAP oracle |
-| TDRV  | 35% | Realized volatility of the underlying asset |
-| CPLCS | 20% | Liquidation cascade amplification across protocols |
-| TCO   | 15% | Entropy of the tick observation sequence (manipulation fingerprint) |
-
-Score maps to a dynamic LTV recommendation (50%-80%) and a 5-rung alert ladder
-(NOMINAL / WATCH / WARNING / DANGER / EMERGENCY).
-
----
-
-## Contracts
-
-### ManipulationCostOracle (MCO) — Pillar 1
-
-Estimates the USD cost to manipulate a Uniswap V3 TWAP by a given number of basis
-points. Uses a tick-bitmap liquidity walk (up to 20 initialized ticks, 10 bitmap words)
-to account for real on-chain liquidity distribution. Pulls the live WETH borrow rate
-from Aave V3 via `variableBorrowRate` (falls back to a static rate when unavailable).
-Supports multi-window analysis.
-
-```solidity
-(uint256 costUsd, uint256 score) = mco.getManipulationCost(devBps);
-uint256 rateBps = mco.getEffectiveBorrowRateBps();
-
-// Multi-window (300s, 900s, 1800s, 3600s)
-ManipulationCostOracle.MultiWindowCost memory mw = mco.getManipulationCostMultiWindow(devBps);
-
-// Single custom window (min 300 s)
-(uint256 cost, uint256 s) = mco.getManipulationCostAtWindow(devBps, windowSeconds);
-```
-
-Constructor (9 params):
-```solidity
-new ManipulationCostOracle(
-    address pool,
-    address token1UsdFeed,
-    uint32  twapWindow,           // min 300 s
-    uint256 borrowRatePerYearBps, // 1-10000
-    uint256 costThresholdLow,     // 8-decimal USD, e.g. 1_000_000 * 1e8
-    uint256 costThresholdHigh,    // 8-decimal USD, e.g. 100_000_000 * 1e8
-    address aaveDataProvider,     // address(0) = disabled
-    address token1Address,        // address(0) = disabled
-    uint8   token1Decimals        // 18 for WETH, 6 for USDC
-)
-```
-
-Normalized/breakdown helpers (useful for UIs — caps display cost without affecting score):
-```solidity
-(uint256 normalizedCostUsd, uint256 score, bool capped) =
-    mco.getManipulationCostNormalized(devBps);
-
-(uint256 rawCostUsd, uint256 normalizedCostUsd, uint256 score, bool capped) =
-    mco.getManipulationCostBreakdown(devBps);
-```
-
----
-
-### TickDerivedRealizedVolatility (TDRV) — Pillar 2
-
-Computes 24-hour annualized realized volatility from Uniswap V3 pool observations.
-Samples 24 hourly TWAP ticks, converts to log-returns, and applies a 252-day
-annualization factor. Entirely on-chain, no off-chain feeds. Supports EWMA smoothing
-and automatic volatility regime classification.
-
-```solidity
-uint256 volBps = tdrv.getRealizedVolatility();           // annualized, in BPS
-uint256 score  = tdrv.getVolatilityScore(2_000, 20_000); // 0-100
-
-// EWMA-smoothed vol (lambdaBps: 9000 = slow decay, 5000 = fast)
-uint256 ewmaVol = tdrv.getVolatilityEWMA(lambdaBps);
-
-// Over a custom window
-uint256 windowVol = tdrv.getVolatilityOverWindow(windowSeconds, nSamples);
-
-// Regime: LOW_VOL / NORMAL / ELEVATED / HIGH_VOL / EXTREME
-TickDerivedRealizedVolatility.VolatilityRegime regime = tdrv.getVolatilityRegime();
-```
-
----
-
-### CrossProtocolCascadeScore (CPLCS) — Pillar 3
-
-Aggregates collateral exposure across Aave V3, Compound V3, Morpho Blue, and
-Euler V2 vaults (ERC-4626), then models liquidation cascade amplification via
-iterative convergence (8 rounds). Larger price shocks produce proportionally
-higher cascade scores.
-
-```solidity
-CrossProtocolCascadeScore.CascadeResult memory r = cplcs.getCascadeScore(weth, shockBps);
-// r.totalCollateralUsd, r.cascadeScore, r.amplificationBps
-
-uint256 eulerVaultCount = cplcs.eulerV2ConfigCount();
-```
-
----
-
-### TickConcentrationOracle (TCO) — Pillar 4
-
-Detects manipulation fingerprints using information theory on the Uniswap V3 tick
-observation sequence. A legitimate price moves randomly (high Shannon entropy); a
-TWAP attack requires holding the price artificially (low entropy, highly structured).
-
-**Entropy proxy:** Herfindahl-Hirschman Index (HHI), the same measure used in
-antitrust economics to quantify market concentration — here applied to tick-bucket
-concentration.
-
-- **HHI** = sum(count_i^2) / N^2 — 1/K for K uniform buckets, 1 for single bucket
-- **Renyi H_2** = floor(log2(BPS / hhiBps)) integer bits
-- **Directional Bias** = fraction of consecutive same-direction tick pairs
-  (5000 BPS = random walk, 10000 = monotone push)
-
-```solidity
-uint256 score = tco.getConcentrationScore();  // 0 = organic, 100 = attack
-
-TickConcentrationOracle.ConcentrationResult memory r = tco.getConcentrationBreakdown();
-// r.hhiBps, r.directionalBiasBps, r.entropyBits, r.compositeScore
-
-uint256 hhi     = tco.getHHI();
-uint256 entropy = tco.getApproximateEntropyBits();
-uint256 bias    = tco.getDirectionalBias();
-```
-
-Constructor (3 params):
-```solidity
-new TickConcentrationOracle(
-    address pool,
-    uint32  windowSeconds,  // >= 60 * numSamples
-    uint8   numSamples      // 3-48
-)
-```
-
----
-
-### UnifiedRiskCompositor (URC)
-
-Combines the four sub-scores with configurable weights into a single 0-100 risk score,
-maps it to a dynamic LTV recommendation, and maintains an 8-slot ring-buffer score
-history with EWMA smoothing and momentum tracking.
-
-```solidity
-(uint256 score, UnifiedRiskCompositor.RiskTier tier, uint256 ltvBps) = urc.updateRiskScore();
-
-uint256 ewma           = urc.getEWMAScore();
-uint256[] memory hist  = urc.getScoreHistory(); // up to 8 entries
-bool tcoEnabled        = urc.isTcoEnabled();
-
-// Momentum enum: PLUNGING / FALLING / STABLE / RISING / SPIKING
-(UnifiedRiskCompositor.ScoreMomentum momentum, int256 delta) = urc.getScoreMomentum();
-
-// Multi-asset query (does NOT update cached state)
-(uint256 comp, uint256 mcoIn, uint256 tdrvIn, uint256 cpIn,
- RiskTier t, uint256 ltv, uint256 volBps, uint256 costUsd, uint256 tcoIn)
-    = urc.getScoreForAsset(pool, feed);           // cascade uses trackedAsset
-    = urc.getScoreForAsset(pool, feed, asset);    // explicit cascade asset override
-```
-
-Weights are mutable via `setWeights(uint8 w1, uint8 w2, uint8 w3, uint8 w4)`
-(w4 = 0 when TCO is disabled for 3-pillar mode).
-
----
-
-### RiskCircuitBreaker
-
-Abstract base contract for on-chain autonomous risk response. Inherit in any lending
-protocol, vault, or AMM that wants risk-score-driven parameter adjustment in the
-**same block** a threshold is crossed — zero governance delay.
-
-```
-AlertLevel ladder:
-  NOMINAL    score  0-24
-  WATCH      score 25-49
-  WARNING    score 50-64
-  DANGER     score 65-79
-  EMERGENCY  score 80-100
-```
-
-```solidity
-// Permissionless trigger (callable by any bot after cooldown)
-circuitBreaker.checkAndRespond();
-bool cooling = circuitBreaker.isInCooldown();
-RiskCircuitBreaker.AlertLevel level = circuitBreaker.currentLevel();
-```
-
-Override `_onLevelChange(AlertLevel prev, AlertLevel next)` to implement custom
-responses (tighten LTV, pause borrows, halt deposits, etc.).
-
-`LendingProtocolCircuitBreaker` is the ready-to-use concrete implementation included
-in `RiskCircuitBreaker.sol`.
-
----
-
-### StressScenarioRegistry
-
-On-chain library of historical DeFi stress scenarios — permanently verifiable and
-replayable against current market conditions. Makes protocol stress-testing auditable
-rather than proprietary.
-
-| ID | Scenario | Event |
-|----|----------|-------|
-| 0 | BLACK_THURSDAY_2020   | ETH -60% in 24 h, MakerDAO liquidation crisis |
-| 1 | LUNA_COLLAPSE_2022    | LUNA hyperinflation, $40 B wiped in 72 h |
-| 2 | FTX_COLLAPSE_2022     | FTX insolvency, ETH -40% contagion |
-| 3 | STABLECOIN_DEPEG_2023 | SVB bank-run, USDC temporarily at $0.87 |
-| 4 | SYNTHETIC_WORST_CASE  | Synthetic -90% shock, maximum cascade |
-
-```solidity
-registry.runScenario(scenarioId, token);
-registry.runAllScenarios(token);
-registry.worstCaseScenario(token);
-registry.addCustomScenario(name, shockBps, volBps, devBps, description);
-```
-
----
-
-## Chainlink Integration
-
-### File Links (for Judges)
-| Product | Contract File | Key function |
-|---------|--------------|-------------|
-| **Price Feeds** | [`ChainlinkVolatilityOracle.sol`](src/ChainlinkVolatilityOracle.sol) | `getVolatilityWithConfidence()`, `getPriceFeedDetails()` |
-| **Automation** | [`AutomatedRiskUpdater.sol`](src/AutomatedRiskUpdater.sol) | `checkUpkeep()`, `performUpkeep()` |
-| **CCIP** | [`CrossChainRiskBroadcaster.sol`](src/CrossChainRiskBroadcaster.sol) | `broadcastToAll()`, `_ccipReceive()` |
-| **CRE Workflow** | [`workflows/risk-orchestrator/index.ts`](workflows/risk-orchestrator/index.ts) | `onTrigger()` |
-
-### How Judges Can Verify in 5 Minutes
-See **[docs/JUDGE_PACK.md](docs/JUDGE_PACK.md)** for:
-- Exact `cast call` commands to read live Sepolia data
-- Expected outputs for each Chainlink product
-- Complete `forge test` + `npm build` commands
-- Registry/router verification commands for multi-asset mode (`getSupportedAssets`, `getConfig`, `assetRiskState`)
-
-### Multi-Asset Verification Commands
+### Install
 
 ```shell
-# AssetRegistry: all configured assets
+curl -L https://foundry.paradigm.xyz | bash
+foundryup
+npm install
+npm --prefix dashboard install
+```
+
+### Build
+
+```shell
+forge build
+npm --prefix dashboard run build
+```
+
+### Tests
+
+Offline / unit path:
+
+```shell
+FOUNDRY_OFFLINE=true forge test --no-match-path test/foundry/ForkTests.t.sol
+```
+
+Mainnet fork path:
+
+```shell
+MAINNET_RPC_URL=https://mainnet.infura.io/v3/YOUR_KEY \
+  forge test --match-path test/foundry/ForkTests.t.sol -vvv
+```
+
+### Run the dashboard locally
+
+```shell
+npm --prefix dashboard run dev
+```
+
+The dashboard reads live contracts when `NEXT_PUBLIC_*` addresses are configured. Unsupported or disabled assets are not rendered as fake live markets.
+
+### Compile and simulate the CRE workflow
+
+```shell
+cd workflows/risk-orchestrator
+npm install
+npm run setup
+npm run compile
+PATH="$HOME/.bun/bin:$PATH" \
+cre workflow simulate ./workflows/risk-orchestrator -T staging-settings --non-interactive --trigger-index 0
+```
+
+## Verification
+
+For the full judge-oriented verification pack, see [`docs/JUDGE_PACK.md`](docs/JUDGE_PACK.md).
+
+### Multi-asset verification
+
+```shell
 cast call $ASSET_REGISTRY \
   "getSupportedAssets()(address[])" \
   --rpc-url $SEPOLIA_RPC_URL
 
-# AssetRegistry: enabled-only assets
 cast call $ASSET_REGISTRY \
   "getEnabledAssets()(address[])" \
   --rpc-url $SEPOLIA_RPC_URL
 
-# AssetRegistry: config for one asset
 cast call $ASSET_REGISTRY \
   "getConfig(address)((address,address,address,uint8,uint256,uint256,uint256,bool))" \
   $ASSET_ADDRESS \
   --rpc-url $SEPOLIA_RPC_URL
 
-# MultiAssetRiskRouter: cached risk state for one asset
 cast call $MULTI_ASSET_ROUTER \
   "assetRiskState(address)(uint256,uint256,uint256,uint256,uint256,uint8,uint256,uint256,uint256,uint256,uint256)" \
   $ASSET_ADDRESS \
   --rpc-url $SEPOLIA_RPC_URL
 ```
 
-Three contracts add deep Chainlink product coverage on top of the four-pillar core.
-
-### ChainlinkVolatilityOracle — Price Feeds
-
-Independently verifies TDRV's Uniswap-derived volatility using **Chainlink Price Feeds**.
-Walks backwards through `getRoundData(roundId--)` over N historical rounds, computes
-simple returns, calculates variance, and annualizes with a √8760 factor (hourly rounds).
-Provides a second, off-chain-verified volatility signal that cross-checks the on-chain
-Uniswap observation ring-buffer — any divergence is a manipulation signal.
-
-```solidity
-uint256 volBps = cvo.getRealizedVolatility();             // annualised, BPS
-uint256 score  = cvo.getVolatilityScore(lowBps, highBps); // 0-100
-ChainlinkVolatilityOracle.VolatilityRegime regime = cvo.getVolatilityRegime();
-
-ChainlinkVolatilityOracle.VolatilityWithConfidence memory vc = cvo.getVolatilityWithConfidence();
-// vc.volBps, vc.numRoundsUsed, vc.latestPrice, vc.oldestRoundAge
-
-(string memory desc, uint8 dec, uint256 price, uint80 roundId) = cvo.getPriceFeedDetails();
-```
-
-Constructor:
-```solidity
-new ChainlinkVolatilityOracle(
-    address priceFeed,       // AggregatorV3Interface (e.g. ETH/USD)
-    uint8   numSamples,      // 4-48 historical rounds
-    uint32  maxStaleness     // min 3600 s
-)
-```
-
-### AutomatedRiskUpdater — Chainlink Automation
-
-Implements `AutomationCompatibleInterface` so a **Chainlink Automation** keeper calls
-batched `updateRiskForAssets()` and `checkAndRespond()` every 5 minutes — no off-chain
-bot required, no single point of failure, Sybil-resistant via the Chainlink DON.
-
-```solidity
-(bool upkeepNeeded, bytes memory) = aru.checkUpkeep("");
-aru.performUpkeep(""); // called by Automation Node
-
-uint256 count    = aru.upkeepCount();
-uint256 nextIn   = aru.secondsUntilNextUpkeep();
-```
-
-> **Live Sepolia Automation Proof:**
-> `AutomatedRiskUpdater` is actively registered on the Chainlink Automation Network.
-> **Upkeep ID**: `55979398141976704248916940835648987232607128922315091009692569738181087735824`
-
-`checkUpkeep` returns `true` when:
-- Contract is not paused
-- `block.timestamp >= lastUpkeep + interval`
-- Circuit breaker is not in cooldown
-
-### CrossChainRiskBroadcaster — Chainlink CCIP
-
-Sends a `RiskPayload{compositeScore, alertLevel, ltvBps, timestamp, sourceContract}`
-to any registered L2 destination via **Chainlink CCIP** whenever the alert level is
-at or above the configured threshold (default: WARNING).
-
-> **Live Sepolia CCIP Integration Proof:**
-> See **[CCIP Explorer Link](https://ccip.chain.link/msg/0x214808a8a6990228fb270ccb83ab45d37ddf3b58f3044a6d250889a61528209e)** for a live cross-chain message successfully sent from Sepolia to Base Sepolia using this implementation.
-
-```solidity
-// Register a destination chain
-ccrb.addDestination(chainSelector, receiverAddress);
-
-// Send to a single chain (with ETH for fee)
-bytes32 messageId = ccrb.broadcastTo{value: fee}(chainSelector);
-
-// Broadcast to all active destinations
-uint256 totalFeeSpent = ccrb.broadcastToAll{value: estimatedFee}();
-
-// Fee estimation
-uint256 fee = ccrb.estimateFee(chainSelector);
-```
-
-The receiver on any destination chain inherits `CCIPReceiver` and decodes the
-`RiskPayload`, enabling native on-chain risk-aware execution on Base, Arbitrum,
-Optimism, or any CCIP-supported network.
-
----
-
-## Quickstart
+### Chainlink Price Feeds verification
 
 ```shell
-# Install Foundry
-curl -L https://foundry.paradigm.xyz | bash && foundryup
+cast call 0x2DD8064f972168d3eEadedb90BbBd4B49DaC046c \
+  "getPriceFeedDetails()(string,uint8,uint256,uint80)" \
+  --rpc-url $SEPOLIA_RPC_URL
+```
 
-# Install JS dependencies (root + dashboard)
-npm install
-npm --prefix dashboard install
+### Chainlink Automation verification
 
-# Build
-forge build
+```shell
+cast call 0x473779900D540F0098D4EDf40bD3b94a36f8731C \
+  "checkUpkeep(bytes)(bool,bytes)" \
+  0x \
+  --rpc-url $SEPOLIA_RPC_URL
+```
 
-# Unit tests (no RPC needed — 192 tests total)
-forge test --no-match-path test/foundry/ForkTests.t.sol -vvv
+### Chainlink CCIP verification
 
-# Mainnet fork tests (requires RPC)
-MAINNET_RPC_URL=https://mainnet.infura.io/v3/YOUR_KEY \
-  forge test --match-path test/foundry/ForkTests.t.sol -vvv
+```shell
+cast call 0xFd51A5E98355dC874Bf75EA6ED36Ae159810bFBE \
+  "estimateFee(uint64)(uint256)" \
+  10344971235874465080 \
+  --rpc-url $SEPOLIA_RPC_URL
+```
+
+### Composite score verification
+
+```shell
+cast call 0x153D2bc4bdDdB1b6b54f127e718bdE004d75AB44 \
+  "getRiskScore()(uint256)" \
+  --rpc-url $SEPOLIA_RPC_URL
 ```
 
 ## Deployment
 
-**Sepolia testnet** (live — contracts already deployed, see addresses above):
+### Sepolia
+
 ```shell
 source .env
 forge script script/DeploySepolia.s.sol \
-  --rpc-url $SEPOLIA_RPC_URL    \
-  --private-key $PRIVATE_KEY    \
+  --rpc-url $SEPOLIA_RPC_URL \
+  --private-key $PRIVATE_KEY \
   --broadcast --verify
 ```
 
-**Mainnet**:
+### Mainnet
+
 ```shell
 forge script script/Deploy.s.sol \
-  --rpc-url $MAINNET_RPC_URL     \
-  --private-key $DEPLOYER_KEY    \
+  --rpc-url $MAINNET_RPC_URL \
+  --private-key $DEPLOYER_KEY \
   --broadcast --verify
 ```
 
-Both scripts deploy all core + multi-asset contracts in dependency order and log each address.
+### Dashboard wiring
 
-**Dashboard** (live mode — point to deployed contracts):
-```shell
-cd dashboard
-# Create .env.local with NEXT_PUBLIC_* addresses (see .env.example)
-npm run dev          # local dev
-vercel --prod        # deploy to Vercel
-```
+After deploying the multi-asset upgrade, export:
 
-## Configuration
+- `NEXT_PUBLIC_ASSET_REGISTRY_ADDRESS`
+- `NEXT_PUBLIC_MULTI_ASSET_ROUTER_ADDRESS`
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| TWAP window (MCO) | 1800 s (30 min) | Manipulation resistance vs. freshness |
-| Fallback borrow rate | 500 BPS (5%) | Used when Aave V3 is unavailable |
-| Cost threshold low | $1M | MCO score = 0 below this |
-| Cost threshold high | $100M | MCO score = 100 above this |
-| Vol sample window | 24 x 1 h | TDRV realized vol span |
-| TCO samples | 24, window 86400 s | Tick entropy observation window (24h) |
-| Composite weights | 30 / 35 / 20 / 15 | MCO / TDRV / CPLCS / TCO |
-| EWMA alpha (URC) | 3000 BPS (30%) | Score smoothing decay |
-| Circuit breaker cooldown | 300 s | Min seconds between alert transitions |
+The dashboard should be pointed only at deployed contracts. If an asset is not configured or not enabled in `AssetRegistry`, it should stay absent or disabled in the UI.
 
-## Mainnet Addresses (Ethereum)
+## Configuration Reference
 
-| Contract / Feed | Address |
-|-----------------|---------|
+| Parameter | Default | Meaning |
+|---|---|---|
+| TWAP window (MCO) | `1800` seconds | Manipulation resistance vs freshness |
+| Fallback borrow rate | `500` BPS | Used if Aave live borrow rate is unavailable |
+| Cost threshold low | `$1M` | MCO score floor |
+| Cost threshold high | `$100M` | MCO score ceiling |
+| Vol sample window | `24 x 1h` | TDRV realized volatility span |
+| TCO samples | `24`, window `86400` seconds | Entropy observation range |
+| Composite weights | `30 / 35 / 20 / 15` | MCO / TDRV / CPLCS / TCO |
+| URC EWMA alpha | `3000` BPS | Score smoothing factor |
+| Circuit breaker cooldown | `300` seconds | Minimum interval between state changes |
+
+### Mainnet reference infrastructure
+
+| Component | Address |
+|---|---|
 | WETH/USDC pool (0.05%) | `0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640` |
 | ETH/USD Chainlink feed | `0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419` |
 | Chainlink CCIP Router | `0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D` |
 | Aave V3 PoolDataProvider | `0x7B4EB56E7CD4b454BA8ff71E4518426369a138a3` |
 | WETH | `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` |
-| Compound V3 USDC comet | `0xc3d688B66703497DAA19211EEdff47f25384cdc3` |
+| Compound V3 USDC Comet | `0xc3d688B66703497DAA19211EEdff47f25384cdc3` |
 | Morpho Blue | `0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb` |
+
+## Repository Layout
+
+| Path | Purpose |
+|---|---|
+| [`src/`](src) | Solidity contracts |
+| [`script/`](script) | Forge deployment and upkeep scripts |
+| [`test/foundry/`](test/foundry) | Unit and fork tests |
+| [`dashboard/`](dashboard) | Next.js dashboard |
+| [`workflows/risk-orchestrator/`](workflows/risk-orchestrator) | Chainlink CRE workflow |
+| [`docs/JUDGE_PACK.md`](docs/JUDGE_PACK.md) | Verification pack |
+| [`docs/COMPETITIVE_EDGE.md`](docs/COMPETITIVE_EDGE.md) | Novelty and positioning |
+
+## Limitations
+
+RiskSync is explicit about its current boundaries:
+
+- It is a hackathon system, not a production-audited protocol.
+- Sepolia is useful for proving integration, but not all mainnet lending venues exist there with equal fidelity.
+- Additional assets require valid pool and feed infrastructure; they are not auto-magically live.
+- The CRE workflow is implemented and simulation-ready, but should only be described as live if separately deployed on CRE infrastructure.
+- The single-asset `UnifiedRiskCompositor` path still exists for backward compatibility, while the multi-asset router is the current architecture.
+
+## Additional Docs
+
+- [`docs/JUDGE_PACK.md`](docs/JUDGE_PACK.md) - exact verification commands and expected outputs
+- [`docs/COMPETITIVE_EDGE.md`](docs/COMPETITIVE_EDGE.md) - novelty framing and competitive differentiation
+- [`workflows/risk-orchestrator/README.md`](workflows/risk-orchestrator/README.md) - workflow-specific notes
+
+## Summary
+
+RiskSync turns DeFi risk from a passive analytics problem into an on-chain execution layer. It does that with:
+
+- Real liquidity-aware oracle security measurement
+- On-chain realized volatility
+- Cross-protocol liquidation contagion modeling
+- Information-theoretic manipulation detection
+- Multi-asset routing without per-token redeploys
+- Chainlink-native automation, cross-chain alerting, and workflow orchestration
+
+If a lending protocol wants risk-aware collateral management instead of static assumptions, RiskSync is the integration layer.
