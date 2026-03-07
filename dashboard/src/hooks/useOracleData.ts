@@ -10,10 +10,34 @@ import { SUPPORTED_ASSETS } from "@/lib/types";
 const SIM_POLL_MS = 3_000;
 const LIVE_POLL_MS = 10_000;
 const ASSET_POLL_MS = 30_000;
+const LIVE_FETCH_TIMEOUT_MS = 6_000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("Live snapshot timeout")), timeoutMs);
+    promise
+      .then((v) => {
+        clearTimeout(t);
+        resolve(v);
+      })
+      .catch((e) => {
+        clearTimeout(t);
+        reject(e);
+      });
+  });
+}
 
 export function useOracleData(activeAsset: string = "ETH") {
   const live = isLive();
-  const [data, setData] = useState<OracleSnapshot | null>(null);
+  const [data, setData] = useState<OracleSnapshot | null>(() => {
+    const initial = generateSnapshot(activeAsset);
+    initial.asset = activeAsset;
+    initial.assetAddress = activeAsset;
+    initial.assetConfigured = !live;
+    initial.assetEnabled = true;
+    initial.assetStatusNote = live ? "BOOTSTRAP" : "SIMULATION";
+    return initial;
+  });
   const [assets, setAssets] = useState<Asset[]>(live ? [] : SUPPORTED_ASSETS);
   const [simMode, setSimMode] = useState(!live);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -70,7 +94,10 @@ export function useOracleData(activeAsset: string = "ETH") {
 
       if (live) {
         try {
-          const liveData = await fetchLiveSnapshot(activeSymbol, activeAddress, activeEnabled);
+          const liveData = await withTimeout(
+            fetchLiveSnapshot(activeSymbol, activeAddress, activeEnabled),
+            LIVE_FETCH_TIMEOUT_MS
+          );
           Object.assign(base, liveData);
           if (liveData.mco) Object.assign(base.mco, liveData.mco);
           if (liveData.tdrv) Object.assign(base.tdrv, liveData.tdrv);
