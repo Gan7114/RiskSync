@@ -14,7 +14,7 @@ const ASSET_POLL_MS = 30_000;
 export function useOracleData(activeAsset: string = "ETH") {
   const live = isLive();
   const [data, setData] = useState<OracleSnapshot | null>(null);
-  const [assets, setAssets] = useState<Asset[]>(SUPPORTED_ASSETS);
+  const [assets, setAssets] = useState<Asset[]>(live ? [] : SUPPORTED_ASSETS);
   const [simMode, setSimMode] = useState(!live);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const assetsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -29,7 +29,7 @@ export function useOracleData(activeAsset: string = "ETH") {
     let cancelled = false;
     const refreshAssets = async () => {
       const configured = await fetchConfiguredAssets();
-      if (!cancelled && configured.length > 0) {
+      if (!cancelled) {
         setAssets(configured);
       }
     };

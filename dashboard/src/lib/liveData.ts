@@ -199,10 +199,15 @@ export async function fetchConfiguredAssets(): Promise<Asset[]> {
 
   let addresses: string[] = [];
   try {
-    const raw = await registry.getSupportedAssets();
+    const raw = await registry.getEnabledAssets();
     addresses = (raw as string[]).map((a) => String(a));
   } catch {
-    return [];
+    try {
+      const raw = await registry.getSupportedAssets();
+      addresses = (raw as string[]).map((a) => String(a));
+    } catch {
+      return [];
+    }
   }
 
   const assets = await Promise.all(
@@ -224,22 +229,23 @@ export async function fetchConfiguredAssets(): Promise<Asset[]> {
   );
 
   const filtered = assets.filter((a): a is Asset => a !== null);
-  filtered.sort((a, b) => {
-    if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+  const enabledOnly = filtered.filter((a) => a.enabled);
+  enabledOnly.sort((a, b) => {
     return a.symbol.localeCompare(b.symbol);
   });
 
   // De-duplicate symbols for dropdown stability.
   const seen = new Map<string, number>();
-  for (const asset of filtered) {
-    const n = seen.get(asset.symbol) ?? 0;
+  for (const asset of enabledOnly) {
+    const baseSymbol = asset.symbol;
+    const n = seen.get(baseSymbol) ?? 0;
     if (n > 0) {
-      asset.symbol = `${asset.symbol}-${asset.address.slice(2, 6)}`;
+      asset.symbol = `${baseSymbol}-${asset.address.slice(2, 6)}`;
     }
-    seen.set(asset.symbol, n + 1);
+    seen.set(baseSymbol, n + 1);
   }
 
-  return filtered;
+  return enabledOnly;
 }
 
 export async function fetchLiveSnapshot(
@@ -626,11 +632,16 @@ async function applyChainlinkPanelData(
     }
   };
 
-  if (assetFeedAddress) {
-    assetFeedLoaded = await tryReadFeedReport(assetFeedAddress);
+  const feedCandidates = [preferredFeedAddress, assetFeedAddress]
+    .map((addr) => String(addr || "").trim())
+    .filter((addr, idx, arr) => addr.length > 0 && addr !== ethers.ZeroAddress && arr.indexOf(addr) === idx);
+
+  for (const feedAddress of feedCandidates) {
+    assetFeedLoaded = await tryReadFeedReport(feedAddress);
     if (!assetFeedLoaded) {
-      assetFeedLoaded = await tryReadFeed(assetFeedAddress);
+      assetFeedLoaded = await tryReadFeed(feedAddress);
     }
+    if (assetFeedLoaded) break;
   }
 
   if (!assetFeedLoaded && canUseEthOnlyFallback) {
