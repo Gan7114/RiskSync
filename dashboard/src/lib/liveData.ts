@@ -199,11 +199,11 @@ export async function fetchConfiguredAssets(): Promise<Asset[]> {
 
   let addresses: string[] = [];
   try {
-    const raw = await registry.getEnabledAssets();
+    const raw = await registry.getSupportedAssets();
     addresses = (raw as string[]).map((a) => String(a));
   } catch {
     try {
-      const raw = await registry.getSupportedAssets();
+      const raw = await registry.getEnabledAssets();
       addresses = (raw as string[]).map((a) => String(a));
     } catch {
       return [];
@@ -229,14 +229,14 @@ export async function fetchConfiguredAssets(): Promise<Asset[]> {
   );
 
   const filtered = assets.filter((a): a is Asset => a !== null);
-  const enabledOnly = filtered.filter((a) => a.enabled);
-  enabledOnly.sort((a, b) => {
+  filtered.sort((a, b) => {
+    if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
     return a.symbol.localeCompare(b.symbol);
   });
 
   // De-duplicate symbols for dropdown stability.
   const seen = new Map<string, number>();
-  for (const asset of enabledOnly) {
+  for (const asset of filtered) {
     const baseSymbol = asset.symbol;
     const n = seen.get(baseSymbol) ?? 0;
     if (n > 0) {
@@ -245,7 +245,7 @@ export async function fetchConfiguredAssets(): Promise<Asset[]> {
     seen.set(baseSymbol, n + 1);
   }
 
-  return enabledOnly;
+  return filtered;
 }
 
 export async function fetchLiveSnapshot(
