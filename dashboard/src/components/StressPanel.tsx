@@ -20,6 +20,14 @@ function scoreColor(s: number) {
   return "#10b981";
 }
 
+function formatPctFromBps(bps: number) {
+  return `${(bps / 100).toFixed(2)}%`;
+}
+
+function formatBps(bps: number) {
+  return `${bps.toLocaleString()} bps`;
+}
+
 export default function StressPanel({ scenarios }: Props) {
   const worst = scenarios.find(s => s.isWorstCase);
 
@@ -28,7 +36,7 @@ export default function StressPanel({ scenarios }: Props) {
       <div className="flex items-center justify-between">
         <div>
           <div className="text-[10px] text-slate-500 tracking-widest">STRESS SCENARIOS</div>
-          <div className="text-sm font-bold text-slate-200">Historical Crisis Replay</div>
+          <div className="text-sm font-bold text-slate-200">Historical & Synthetic Crisis Replay</div>
         </div>
         <div className="flex items-center gap-1.5 text-[10px] text-red-500 border border-red-900 bg-red-950 px-2 py-1 rounded-full">
           <Skull className="w-3 h-3" />
@@ -78,13 +86,15 @@ export default function StressPanel({ scenarios }: Props) {
                     </div>
                   </td>
                   <td className="py-2.5 pr-3 text-right">
-                    <span className="text-red-400 font-bold">-{(s.shockBps / 100).toFixed(0)}%</span>
+                    <span className="text-red-400 font-bold">-{formatPctFromBps(s.shockBps)}</span>
+                    <div className="text-[10px] text-slate-600">({formatBps(s.shockBps)})</div>
                   </td>
                   <td className="py-2.5 pr-3 text-right">
                     <span className="font-bold" style={{ color: rColor }}>{s.compositeScore}</span>
                   </td>
                   <td className="py-2.5 pr-3 text-right">
-                    <span className="text-slate-300">{(s.ltvBps / 100).toFixed(0)}%</span>
+                    <span className="text-slate-300">{formatPctFromBps(s.ltvBps)}</span>
+                    <div className="text-[10px] text-slate-600">({formatBps(s.ltvBps)})</div>
                   </td>
                   <td className="py-2.5 pr-3 text-right">
                     <div className="inline-flex items-center gap-1">
@@ -112,7 +122,7 @@ export default function StressPanel({ scenarios }: Props) {
           <div>
             <span className="text-red-400 font-bold">Worst Case: </span>
             <span className="text-red-300">{worst.name}</span>
-            <span className="text-red-600 ml-2">— Score {worst.compositeScore}/100, LTV {(worst.ltvBps / 100).toFixed(0)}%</span>
+            <span className="text-red-600 ml-2">— Score {worst.compositeScore}/100, LTV {formatPctFromBps(worst.ltvBps)} ({formatBps(worst.ltvBps)})</span>
           </div>
         </motion.div>
       )}

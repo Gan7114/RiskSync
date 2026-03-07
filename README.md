@@ -2,13 +2,13 @@
 
 **Chainlink Convergence 2026 Hackathon Submission - Risk & Compliance Track**
 
-RiskSync is a multi-asset, on-chain risk orchestration layer for DeFi protocols. It measures four live risk vectors, turns them into a composite score, recommends dynamic LTV, and can trigger automated defensive actions through Chainlink services.
+RiskSync is a **multi-asset risk middleware protocol** for DeFi lending and collateral systems. It continuously measures four live risk vectors per asset, composes them into a single on-chain score, recommends dynamic LTV limits, and can trigger automated defensive actions through Chainlink services.
 
 At a high level, RiskSync answers one question:
 
 > How unsafe is this asset market right now, and what should the protocol do about it?
 
-Instead of relying on static parameters, manual governance, or off-chain dashboards, RiskSync computes risk directly from on-chain liquidity, volatility, cascade exposure, and manipulation fingerprints.
+Instead of relying on static parameters, manual governance, or off-chain dashboards, RiskSync computes risk directly from on-chain liquidity, volatility, cascade exposure, and manipulation fingerprints. It is designed as middleware: existing protocols can integrate RiskSync outputs without redeploying their own full risk stack.
 
 ## Table of Contents
 
@@ -18,7 +18,9 @@ Instead of relying on static parameters, manual governance, or off-chain dashboa
 - [Chainlink Footprint](#chainlink-footprint)
 - [Architecture](#architecture)
 - [Risk Engine](#risk-engine)
+- [BPS Conventions](#bps-conventions)
 - [Multi-Asset Architecture](#multi-asset-architecture)
+- [Historical Crisis Replay](#historical-crisis-replay)
 - [Core Contracts](#core-contracts)
 - [Live Sepolia Deployment](#live-sepolia-deployment)
 - [Quickstart](#quickstart)
@@ -149,11 +151,22 @@ riskScore = (MCO x 30 + TDRV x 35 + CPLCS x 20 + TCO x 15) / 100
 
 | Score | Level | Recommended LTV | Typical response |
 |---|---|---|---|
-| 0-24 | `NOMINAL` | 8000 BPS | No intervention |
-| 25-49 | `WATCH` | 7500 BPS | Monitor closely |
-| 50-64 | `WARNING` | 7000 BPS | Tighten collateral parameters |
-| 65-79 | `DANGER` | 6000 BPS | Aggressive protection |
-| 80-100 | `EMERGENCY` | 5000 BPS | Pause sensitive actions such as borrows |
+| 0-24 | `NOMINAL` | 8000 BPS (80.00%) | No intervention |
+| 25-49 | `WATCH` | 7500 BPS (75.00%) | Monitor closely |
+| 50-64 | `WARNING` | 7000 BPS (70.00%) | Tighten collateral parameters |
+| 65-79 | `DANGER` | 6000 BPS (60.00%) | Aggressive protection |
+| 80-100 | `EMERGENCY` | 5000 BPS (50.00%) | Pause sensitive actions such as borrows |
+
+## BPS Conventions
+
+RiskSync uses basis points (`bps`) for all policy thresholds and many risk parameters.
+
+- `100 bps = 1.00%`
+- `1 bps = 0.01%`
+- Example: `7500 bps = 75.00%` LTV
+- Example: `shockBps = 6000` means a `60.00%` downside shock in stress replay
+
+This convention is used consistently across contracts, dashboard displays, and docs.
 
 ## Multi-Asset Architecture
 
@@ -193,6 +206,31 @@ Each asset config includes:
 |---|---|---|---|---|
 | Mainnet deploy script | Enabled | Disabled unless `BTC_UNI_POOL` is set | Disabled unless `LINK_UNI_POOL` is set | Disabled unless `AAVE_UNI_POOL` is set |
 | Sepolia deploy script | Enabled | Disabled unless pool + feed env vars exist | Disabled unless pool + feed env vars exist | Disabled unless pool + feed env vars exist |
+
+## Historical Crisis Replay
+
+The dashboard includes a **Historical & Synthetic Crisis Replay** panel to help reviewers and integrators understand behavior under stress.
+
+Scenario set:
+
+- Black Thursday (2020)
+- Luna Collapse (2022)
+- FTX Collapse (2022)
+- USDC Depeg (2023)
+- Synthetic Worst Case (stress envelope boundary)
+
+Each row replays a shock profile and shows:
+
+- Shock size (`bps` + `%`)
+- Resulting composite risk score
+- Implied LTV recommendation
+- Cascade severity
+- Manipulation-cost context
+
+Notes:
+
+- Historical replay is for calibration/explainability, not for replacing live market state.
+- The synthetic worst-case row is intentionally conservative and used to validate upper-bound behavior.
 
 ## Core Contracts
 
