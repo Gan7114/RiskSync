@@ -36,7 +36,7 @@ export const ADDRESSES = {
 export const RPC_URL =
   process.env.NEXT_PUBLIC_RPC_URL ??
   process.env.NEXT_PUBLIC_MAINNET_RPC_URL ??
-  "https://rpc.sepolia.org";
+  "https://ethereum-sepolia-rpc.publicnode.com";
 
 export function isLive(): boolean {
   const multiAssetLive = Boolean(ADDRESSES.ASSET_REGISTRY && ADDRESSES.MULTI_ASSET_ROUTER && ADDRESSES.MCO);
