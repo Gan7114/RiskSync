@@ -29,15 +29,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 
 export function useOracleData(activeAsset: string = "ETH") {
   const live = isLive();
-  const [data, setData] = useState<OracleSnapshot | null>(() => {
-    const initial = generateSnapshot(activeAsset);
-    initial.asset = activeAsset;
-    initial.assetAddress = activeAsset;
-    initial.assetConfigured = !live;
-    initial.assetEnabled = true;
-    initial.assetStatusNote = live ? "BOOTSTRAP" : "SIMULATION";
-    return initial;
-  });
+  const [data, setData] = useState<OracleSnapshot | null>(null);
   const [assets, setAssets] = useState<Asset[]>(live ? [] : SUPPORTED_ASSETS);
   const [simMode, setSimMode] = useState(!live);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -123,6 +115,15 @@ export function useOracleData(activeAsset: string = "ETH") {
 
       return base;
     };
+
+    // Fast client-side baseline so the UI does not stay blank while live calls resolve.
+    const baseline = generateSnapshot(activeSymbol);
+    baseline.asset = activeSymbol;
+    baseline.assetAddress = activeAddress;
+    baseline.assetConfigured = activeConfigured || !live;
+    baseline.assetEnabled = activeEnabled || !live;
+    baseline.assetStatusNote = live ? "BOOTSTRAP" : "SIMULATION";
+    setData((prev) => prev ?? baseline);
 
     buildSnapshot().then((snapshot) => {
       setData(snapshot);
